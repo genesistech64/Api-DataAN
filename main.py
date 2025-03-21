@@ -70,7 +70,7 @@ def download_and_parse_deputes():
                     elif "uid" in data and "refActeur" in data:  # 📌 Déports
                         deports_data.append(data)
                     elif "uid" in data and "libelle" in data:  # 📌 Organes
-                        organes_data[data["uid"]] = data["libelle"]
+                        organes_data[data["uid"]] = data["libelle"]["text"]
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
 
@@ -111,7 +111,7 @@ def get_depute(
         if len(matching_deputes) == 0:
             return {"error": "Député non trouvé"}
         elif len(matching_deputes) == 1:
-            return deputes_data[matching_deputes[0]["id"]]
+            depute_id = matching_deputes[0]["id"]
         else:
             return {"error": "Plusieurs députés trouvés, précisez l'identifiant", "options": matching_deputes}
 
@@ -120,7 +120,7 @@ def get_depute(
         if isinstance(depute, dict) and "mandats" in depute and "mandat" in depute["mandats"]:
             for mandat in depute["mandats"]["mandat"]:
                 organe_ref = mandat.get("organes", {}).get("organeRef")
-                if organe_ref in organes_data:
+                if organe_ref and organe_ref in organes_data:
                     mandat["nomOrgane"] = organes_data[organe_ref]  # 🔄 Remplace l'ID par le libellé
         
         return depute
