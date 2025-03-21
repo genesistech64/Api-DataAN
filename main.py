@@ -1,4 +1,13 @@
-from fastapi import FastAPI, Query
+from pathlib import Path
+import zipfile
+
+# Dossier projet
+project_dir = Path("/mnt/data/votes_api_render_fixed")
+project_dir.mkdir(parents=True, exist_ok=True)
+
+# Nouveau main.py corrigé
+main_py = project_dir / "main.py"
+main_py.write_text('''from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 import requests, zipfile, io, json
 from typing import List
@@ -22,7 +31,9 @@ def download_and_parse():
     print("Téléchargement des scrutins...")
     r = requests.get(SCRUTIN_URL)
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-        with z.open("Scrutins.json") as f:
+        filename = [name for name in z.namelist() if name.endswith(".json")][0]
+        print(f"Fichier trouvé dans le zip : {filename}")
+        with z.open(filename) as f:
             scrutins_data = json.load(f)
     print(f"{len(scrutins_data)} scrutins chargés.")
 
@@ -50,7 +61,7 @@ def get_votes(depute_id: str = Query(..., description="Identifiant du député, 
                 if votants:
                     for v in votants:
                         if v.get("acteurRef") == depute_id:
-                            position = cle_vote[:-1].capitalize()  # "pours" -> "Pour"
+                            position = cle_vote[:-1].capitalize()
         results.append({
             "numero": numero,
             "date": date,
@@ -58,3 +69,23 @@ def get_votes(depute_id: str = Query(..., description="Identifiant du député, 
             "position": position
         })
     return results
+''')
+
+# Copier les autres fichiers
+(project_dir / "requirements.txt").write_text("fastapi\nuvicorn[standard]\nrequests\n")
+(project_dir / "render.yaml").write_text('''services:
+  - type: web
+    name: votes-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    plan: free
+''')
+
+# Créer le ZIP corrigé
+zip_path = "/mnt/data/votes_api_render_fixed.zip"
+with zipfile.ZipFile(zip_path, "w") as zipf:
+    for file in project_dir.rglob("*"):
+        zipf.write(file, arcname=file.relative_to(project_dir))
+
+zip_path
