@@ -21,7 +21,6 @@ DEPUTE_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/
 
 scrutins_data = []
 deputes_data = {}
-deports_data = []
 organes_data = {}
 
 # 📥 Téléchargement et extraction des scrutins
@@ -29,7 +28,7 @@ def download_and_parse_scrutins():
     global scrutins_data
     print("📥 Téléchargement des scrutins...")
     r = requests.get(SCRUTIN_URL)
-    
+
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.endswith(".json")]
         scrutins_data.clear()
@@ -45,16 +44,15 @@ def download_and_parse_scrutins():
 
 # 📥 Téléchargement et extraction des députés et organes
 def download_and_parse_deputes():
-    global deputes_data, deports_data, organes_data
+    global deputes_data, organes_data
     print("📥 Téléchargement des données des députés et organes...")
     r = requests.get(DEPUTE_URL)
-    
+
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.startswith("json/") and name.endswith(".json")]
         deputes_data.clear()
-        deports_data.clear()
         organes_data.clear()
-        
+
         for json_file in json_files:
             with z.open(json_file) as f:
                 try:
@@ -63,7 +61,10 @@ def download_and_parse_deputes():
                         uid = data["acteur"]["uid"]["#text"]
                         deputes_data[uid] = data["acteur"]
                     elif "organe" in data and "uid" in data["organe"]:
-                        organes_data[data["organe"]["uid"]] = data["organe"].get("libelle", "Inconnu")
+                        organes_data[data["organe"]["uid"]] = {
+                            "libelle": data["organe"].get("libelle", "Inconnu"),
+                            "type": data["organe"].get("type", "Inconnu"),
+                        }
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
     print(f"✅ {len(deputes_data)} députés chargés.")
@@ -94,20 +95,15 @@ def get_depute(
             {
                 "id": uid,
                 "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
-                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")
+                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", ""),
             }
             for uid, info in deputes_data.items()
-            if any(
-                mandat.get("organes", {}).get("organeRef") == organe_id
-                for mandat in info.get("mandats", {}).get("mandat", [])
-                if isinstance(mandat, dict)
-            )
+            if "mandats" in info and "mandat" in info["mandats"]
+            for mandat in info["mandats"]["mandat"]
+            if isinstance(mandat, dict) and mandat.get("organes", {}).get("organeRef") == organe_id
         ]
-        
-        if not deputes_in_organe:
-            return {"error": "Aucun député trouvé pour cet organe."}
 
-        return deputes_in_organe
+        return deputes_in_organe if deputes_in_organe else {"error": "Aucun député trouvé pour cet organe."}
 
     if nom:
         matching_deputes = [
@@ -120,20 +116,51 @@ def get_depute(
             if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
         ]
 
-        if not matching_deputes:
-            return {"error": "Député non trouvé"}
-        elif len(matching_deputes) == 1:
-            return deputes_data[matching_deputes[0]["id"]]
-        else:
+        if len(matching_deputes) == 1:
+            return deputes_data.get(matching_deputes[0]["id"], {"error": "Député non trouvé"})
+        elif matching_deputes:
             return {"error": "Plusieurs députés trouvés, précisez l'identifiant", "options": matching_deputes}
+        return {"error": "Député non trouvé"}
 
     if depute_id:
-        depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
-        return depute
+        return deputes_data.get(depute_id, {"error": "Député non trouvé"})
 
     return {"error": "Veuillez fournir un identifiant (`depute_id`), un nom (`nom`) ou un organe (`organe_id`)"}
 
+@app.get("/votes")
+def get_votes(depute_id: str = Query(..., description="Identifiant du député, ex: PA1592")):
+    results = []
+
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        numero = scr.get("numero")
+        date = scr.get("dateScrutin")
+        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+        position = "Absent"
+
+        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+        for groupe in groupes:
+            votes = groupe.get("vote", {}).get("decompteNominatif", {})
+            for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
+                bloc = votes.get(cle_vote)
+                if bloc and isinstance(bloc, dict):
+                    votants = bloc.get("votant", [])
+                    if isinstance(votants, dict):
+                        votants = [votants]
+
+                    for v in votants:
+                        if isinstance(v, dict) and v.get("acteurRef") == depute_id:
+                            position = cle_vote[:-1].capitalize()
+
+        results.append({
+            "numero": numero,
+            "date": date,
+            "titre": titre,
+            "position": position
+        })
+
+    return results if results else {"error": "Aucun vote trouvé pour ce député."}
 
 @app.get("/organes")
-def get_organes(organe_id: str = Query(...)):
+def get_organes(organe_id: str = Query(..., description="Identifiant de l'organe, ex: PO845401")):
     return organes_data.get(organe_id, {"error": "Aucun organe trouvé"})
