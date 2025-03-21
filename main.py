@@ -108,7 +108,10 @@ def get_depute(
                 "nomOrgane": organes_data.get(organe_id, "Inconnu")
             }
             for uid, info in deputes_data.items()
-            if any(mandat.get("organes", {}).get("organeRef") == organe_id for mandat in info.get("mandats", {}).get("mandat", []))
+            if any(
+                mandat.get("organes", {}).get("organeRef") == organe_id
+                for mandat in info.get("mandats", {}).get("mandat", [])
+            )
         ]
         return deputes_in_organe if deputes_in_organe else {"error": "Aucun député trouvé pour cet organe."}
 
