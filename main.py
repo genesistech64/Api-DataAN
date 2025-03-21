@@ -70,7 +70,7 @@ def download_and_parse_deputes():
                     elif "uid" in data and "refActeur" in data:  # Déports
                         deports_data.append(data)
                     elif "uid" in data and "libelle" in data:  # Organes
-                        organes_data[data["uid"]] = data
+                        organes_data[data["uid"]] = data["libelle"]
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
 
@@ -92,11 +92,23 @@ def periodic_update():
         download_and_parse_deputes()
         print("✅ Mise à jour terminée.")
 
+@app.get("/depute")
+def get_depute(depute_id: str = Query(...)):
+    depute = deputes_data.get(depute_id)
+    if not depute:
+        return {"error": "Député non trouvé"}
+
+    # 🏛️ Remplacement des UID des organes par leurs libellés
+    if "mandats" in depute and "mandat" in depute["mandats"]:
+        for mandat in depute["mandats"]["mandat"]:
+            organe_ref = mandat.get("organes", {}).get("organeRef")
+            if organe_ref in organes_data:
+                mandat["nomOrgane"] = organes_data[organe_ref]  # Remplace l'ID par le libellé
+    
+    return depute
+
 @app.get("/votes")
 def get_votes(depute_id: str = Query(...)):
-    print(f"🔍 Recherche des votes pour {depute_id}...")
-
-    found = False
     results = []
     
     for entry in scrutins_data:
@@ -111,9 +123,9 @@ def get_votes(depute_id: str = Query(...)):
             votes = groupe.get("vote", {}).get("decompteNominatif", {})
             for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
                 bloc = votes.get(cle_vote)
-                if bloc and isinstance(bloc, dict):  # Vérifier si le bloc de votes est un dictionnaire valide
+                if bloc and isinstance(bloc, dict):
                     votants = bloc.get("votant", [])
-                    if isinstance(votants, dict):  # Gérer le cas d'un seul votant
+                    if isinstance(votants, dict):
                         votants = [votants]
                 else:
                     votants = []
@@ -121,7 +133,6 @@ def get_votes(depute_id: str = Query(...)):
                 for v in votants:
                     if v.get("acteurRef") == depute_id:
                         position = cle_vote[:-1].capitalize()
-                        found = True
 
         results.append({
             "numero": numero,
@@ -130,24 +141,7 @@ def get_votes(depute_id: str = Query(...)):
             "position": position
         })
 
-    if not found:
-        print(f"⚠️ Aucun vote trouvé pour {depute_id} !")
+    if not results:
         return {"error": "Aucun vote trouvé pour ce député."}
 
     return results
-
-@app.get("/depute")
-def get_depute(depute_id: str = Query(...)):
-    return deputes_data.get(depute_id, {"error": "Député non trouvé"})
-
-@app.get("/deports")
-def get_deports(depute_id: str = Query(...)):
-    deports = [d for d in deports_data if d.get("refActeur") == depute_id]
-    if not deports:
-        print(f"⚠️ Aucun déport trouvé pour {depute_id}.")
-        return {"message": "Ce député n'a aucun déport enregistré."}
-    return deports
-
-@app.get("/organes")
-def get_organes(organe_id: str = Query(...)):
-    return organes_data.get(organe_id, {"error": "Aucun organe trouvé"})
