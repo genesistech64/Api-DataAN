@@ -92,82 +92,42 @@ def periodic_update():
         download_and_parse_deputes()
         print("✅ Mise à jour terminée.")
 
-@app.get("/votes")
-def get_votes(depute_id: str = Query(None), nom: str = Query(None)):
-    if nom:
-        matching_deputes = [
-            uid for uid, info in deputes_data.items()
-            if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
-        ]
-        
-        if len(matching_deputes) == 0:
-            return {"error": "Député non trouvé"}
-        elif len(matching_deputes) > 1:
-            return {"error": "Plusieurs députés trouvés, veuillez préciser l'identifiant", "options": matching_deputes}
-        else:
-            depute_id = matching_deputes[0]
-    
-    if not depute_id:
-        return {"error": "Veuillez fournir un identifiant ou un nom de député"}
-    
-    results = []
-    for entry in scrutins_data:
-        scr = entry.get("scrutin", {})
-        numero = scr.get("numero")
-        date = scr.get("dateScrutin")
-        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
-        position = "Absent"
-
-        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
-        for groupe in groupes:
-            votes = groupe.get("vote", {}).get("decompteNominatif", {})
-            for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
-                bloc = votes.get(cle_vote)
-                if not bloc:
-                    continue
-                votants = bloc.get("votant")
-                if isinstance(votants, dict):
-                    votants = [votants]
-                if votants:
-                    for v in votants:
-                        if v.get("acteurRef") == depute_id:
-                            position = cle_vote[:-1].capitalize()
-        results.append({
-            "numero": numero,
-            "date": date,
-            "titre": titre,
-            "position": position
-        })
-    return results
-
 @app.get("/depute")
-def get_depute(
-    depute_id: str = Query(None, description="Identifiant du député, ex: PA1592"),
-    nom: str = Query(None, description="Nom du député, ex: Habib")
-):
+def get_depute(depute_id: str = Query(None), nom: str = Query(None)):
     if nom:
         matching_deputes = [
             {"id": uid, "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""), "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")}
             for uid, info in deputes_data.items()
             if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
         ]
-        
         if len(matching_deputes) == 0:
             return {"error": "Député non trouvé"}
-        elif len(matching_deputes) == 1:
-            return deputes_data[matching_deputes[0]["id"]]
-        else:
+        elif len(matching_deputes) > 1:
             return {"error": "Plusieurs députés trouvés, veuillez préciser l'identifiant", "options": matching_deputes}
+        else:
+            depute_id = matching_deputes[0]["id"]
+    
+    if not depute_id or depute_id not in deputes_data:
+        return {"error": "Député non trouvé"}
 
-    if depute_id:
-        return deputes_data.get(depute_id, {"error": "Député non trouvé"})
-
-    return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
-
-@app.get("/deports")
-def get_deports(depute_id: str = Query(...)):
-    deports = [d for d in deports_data if d.get("refActeur") == depute_id]
-    return deports if deports else {"message": "Aucun déport trouvé pour ce député."}
+    depute_info = deputes_data[depute_id]
+    
+    # Recherche du groupe politique et des organes
+    organes_depute = []
+    for mandat in depute_info.get("mandats", {}).get("mandat", []):
+        organe_id = mandat["organes"].get("organeRef")
+        if organe_id in organes_data:
+            organe_info = organes_data[organe_id]
+            organes_depute.append({
+                "type": organe_info.get("typeOrgane"),
+                "nom": organe_info.get("libelle"),
+                "date_debut": organe_info.get("dateDebut"),
+                "date_fin": organe_info.get("dateFin"),
+                "legislature": organe_info.get("legislature")
+            })
+    
+    depute_info["organes"] = organes_depute
+    return depute_info
 
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
