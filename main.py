@@ -64,12 +64,12 @@ def download_and_parse_deputes():
             with z.open(json_file) as f:
                 try:
                     data = json.load(f)
-                    if "acteur" in data:  # Députés
+                    if "acteur" in data:  # 📌 Députés
                         uid = data["acteur"]["uid"]["#text"]
                         deputes_data[uid] = data["acteur"]
-                    elif "uid" in data and "refActeur" in data:  # Déports
+                    elif "uid" in data and "refActeur" in data:  # 📌 Déports
                         deports_data.append(data)
-                    elif "uid" in data and "libelle" in data:  # Organes
+                    elif "uid" in data and "libelle" in data:  # 📌 Organes
                         organes_data[data["uid"]] = data["libelle"]
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
@@ -93,19 +93,39 @@ def periodic_update():
         print("✅ Mise à jour terminée.")
 
 @app.get("/depute")
-def get_depute(depute_id: str = Query(...)):
-    depute = deputes_data.get(depute_id)
-    if not depute:
-        return {"error": "Député non trouvé"}
+def get_depute(
+    depute_id: str = Query(None, description="Identifiant du député, ex: PA1592"),
+    nom: str = Query(None, description="Nom du député, ex: Habib")
+):
+    if nom:
+        matching_deputes = [
+            {
+                "id": uid,
+                "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
+                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")
+            }
+            for uid, info in deputes_data.items()
+            if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
+        ]
+        
+        if len(matching_deputes) == 0:
+            return {"error": "Député non trouvé"}
+        elif len(matching_deputes) == 1:
+            return deputes_data[matching_deputes[0]["id"]]
+        else:
+            return {"error": "Plusieurs députés trouvés, précisez l'identifiant", "options": matching_deputes}
 
-    # 🏛️ Remplacement des UID des organes par leurs libellés
-    if "mandats" in depute and "mandat" in depute["mandats"]:
-        for mandat in depute["mandats"]["mandat"]:
-            organe_ref = mandat.get("organes", {}).get("organeRef")
-            if organe_ref in organes_data:
-                mandat["nomOrgane"] = organes_data[organe_ref]  # Remplace l'ID par le libellé
-    
-    return depute
+    if depute_id:
+        depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
+        if isinstance(depute, dict) and "mandats" in depute and "mandat" in depute["mandats"]:
+            for mandat in depute["mandats"]["mandat"]:
+                organe_ref = mandat.get("organes", {}).get("organeRef")
+                if organe_ref in organes_data:
+                    mandat["nomOrgane"] = organes_data[organe_ref]  # 🔄 Remplace l'ID par le libellé
+        
+        return depute
+
+    return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
 
 @app.get("/votes")
 def get_votes(depute_id: str = Query(...)):
