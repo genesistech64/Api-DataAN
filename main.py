@@ -100,19 +100,16 @@ def get_depute(
     organe_id: str = Query(None, description="Identifiant de l'organe, ex: PO845401")
 ):
     if organe_id:
-        # Chercher tous les députés appartenant à cet organe
-        deputes_in_organe = []
-        for uid, info in deputes_data.items():
-            if "mandats" in info and "mandat" in info["mandats"]:
-                for mandat in info["mandats"]["mandat"]:
-                    if mandat.get("organes", {}).get("organeRef") == organe_id:
-                        deputes_in_organe.append({
-                            "id": uid,
-                            "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
-                            "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", ""),
-                            "nomOrgane": organes_data.get(organe_id, "Inconnu")
-                        })
-        
+        deputes_in_organe = [
+            {
+                "id": uid,
+                "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
+                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", ""),
+                "nomOrgane": organes_data.get(organe_id, "Inconnu")
+            }
+            for uid, info in deputes_data.items()
+            if any(mandat.get("organes", {}).get("organeRef") == organe_id for mandat in info.get("mandats", {}).get("mandat", []))
+        ]
         return deputes_in_organe if deputes_in_organe else {"error": "Aucun député trouvé pour cet organe."}
 
     if nom:
@@ -125,24 +122,16 @@ def get_depute(
             for uid, info in deputes_data.items()
             if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
         ]
-        
-        if len(matching_deputes) == 0:
-            return {"error": "Député non trouvé"}
-        elif len(matching_deputes) == 1:
-            return deputes_data[matching_deputes[0]["id"]]
-        else:
-            return {"error": "Plusieurs députés trouvés, précisez l'identifiant", "options": matching_deputes}
+        return matching_deputes if matching_deputes else {"error": "Député non trouvé"}
 
     if depute_id:
-        depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
-        return depute
+        return deputes_data.get(depute_id, {"error": "Député non trouvé"})
 
     return {"error": "Veuillez fournir un identifiant (`depute_id`), un nom (`nom`) ou un organe (`organe_id`)."}
 
 @app.get("/votes")
 def get_votes(depute_id: str = Query(...)):
     results = []
-    votes_found = False
     
     for entry in scrutins_data:
         scr = entry.get("scrutin", {})
@@ -156,6 +145,9 @@ def get_votes(depute_id: str = Query(...)):
             votes = groupe.get("vote", {}).get("decompteNominatif", {})
             for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
                 bloc = votes.get(cle_vote, {})
+                if not bloc:
+                    continue  # 🛠 Évite l'erreur si bloc est None
+                
                 votants = bloc.get("votant", [])
                 if isinstance(votants, dict):
                     votants = [votants]
@@ -163,7 +155,6 @@ def get_votes(depute_id: str = Query(...)):
                 for v in votants:
                     if v.get("acteurRef") == depute_id:
                         position = cle_vote[:-1].capitalize()
-                        votes_found = True
 
         results.append({
             "numero": numero,
@@ -172,7 +163,7 @@ def get_votes(depute_id: str = Query(...)):
             "position": position
         })
 
-    return results if votes_found else {"message": "Aucun vote trouvé pour ce député."}
+    return results if results else {"error": "Aucun vote trouvé pour ce député."}
 
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
