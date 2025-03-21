@@ -15,11 +15,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# URL officielle du fichier ZIP contenant les scrutins
+# URL des fichiers de scrutins et des députés
 SCRUTIN_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/scrutins/Scrutins.json.zip"
-scrutins_data = []
+DEPUTE_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/amo/deputes_actifs_mandats_actifs_organes/AMO10_deputes_actifs_mandats_actifs_organes.json.zip"
 
-def download_and_parse():
+scrutins_data = []
+deputes_data = {}
+
+# Fonction pour télécharger et traiter les scrutins
+def download_and_parse_scrutins():
     global scrutins_data
     print("Téléchargement des scrutins...")
     r = requests.get(SCRUTIN_URL)
@@ -28,34 +32,73 @@ def download_and_parse():
         json_files = [name for name in z.namelist() if name.endswith(".json")]
         print(f"{len(json_files)} fichiers JSON trouvés dans le zip.")
         
-        # Charger chaque scrutin et les fusionner
         scrutins_data.clear()
         for json_file in json_files:
             with z.open(json_file) as f:
                 try:
                     data = json.load(f)
                     if isinstance(data, dict) and "scrutin" in data:
-                        scrutins_data.append(data)  # Ajoute uniquement les scrutins valides
+                        scrutins_data.append(data)
                 except json.JSONDecodeError:
                     print(f"Erreur de parsing JSON dans le fichier : {json_file}")
     
     print(f"{len(scrutins_data)} scrutins chargés.")
 
+# Fonction pour télécharger et traiter les informations des députés
+def download_and_parse_deputes():
+    global deputes_data
+    print("Téléchargement des données des députés...")
+    r = requests.get(DEPUTE_URL)
+    
+    with zipfile.ZipFile(io.BytesIO(r.content)) as z:
+        json_files = [name for name in z.namelist() if name.startswith("acteur/") and name.endswith(".json")]
+        print(f"{len(json_files)} fichiers JSON trouvés dans le zip.")
+        
+        deputes_data.clear()
+        for json_file in json_files:
+            with z.open(json_file) as f:
+                try:
+                    data = json.load(f)
+                    acteur = data.get("acteur", {})
+                    uid = acteur.get("uid", {}).get("#text")
+                    nom = acteur.get("etatCivil", {}).get("ident", {}).get("nom", "")
+                    prenom = acteur.get("etatCivil", {}).get("ident", {}).get("prenom", "")
+                    if uid and nom and prenom:
+                        deputes_data[uid] = {"nom": nom, "prenom": prenom}
+                except json.JSONDecodeError:
+                    print(f"Erreur de parsing JSON dans le fichier : {json_file}")
+    
+    print(f"{len(deputes_data)} députés chargés.")
+
 @app.on_event("startup")
 def startup_event():
-    download_and_parse()
-    # Lancer la mise à jour automatique toutes les 48h (172800 secondes)
+    download_and_parse_scrutins()
+    download_and_parse_deputes()
     threading.Thread(target=periodic_update, daemon=True).start()
 
 def periodic_update():
     while True:
         time.sleep(172800)  # Attendre 48 heures
-        print("⏳ Mise à jour automatique des scrutins...")
-        download_and_parse()
+        print("⏳ Mise à jour automatique des données...")
+        download_and_parse_scrutins()
+        download_and_parse_deputes()
         print("✅ Mise à jour terminée.")
 
 @app.get("/votes")
-def get_votes(depute_id: str = Query(..., description="Identifiant du député, ex: PA1592")):
+def get_votes(depute_id: str = Query(None, description="Identifiant du député, ex: PA1592"), nom: str = Query(None, description="Nom du député")):
+    if nom:
+        matching_deputes = [uid for uid, info in deputes_data.items() if info["nom"].lower() == nom.lower()]
+        
+        if len(matching_deputes) == 0:
+            return {"error": "Député non trouvé"}
+        elif len(matching_deputes) > 1:
+            return {"error": "Plusieurs députés trouvés, veuillez préciser l'identifiant", "options": matching_deputes}
+        else:
+            depute_id = matching_deputes[0]
+    
+    if not depute_id:
+        return {"error": "Veuillez fournir un identifiant ou un nom de député"}
+    
     results = []
     for entry in scrutins_data:
         scr = entry.get("scrutin", {})
@@ -72,12 +115,12 @@ def get_votes(depute_id: str = Query(..., description="Identifiant du député, 
                 if not bloc:
                     continue
                 votants = bloc.get("votant")
-                if isinstance(votants, dict):  # Cas où il n'y a qu'un seul votant
+                if isinstance(votants, dict):
                     votants = [votants]
                 if votants:
                     for v in votants:
                         if v.get("acteurRef") == depute_id:
-                            position = cle_vote[:-1].capitalize()  # pours → Pour
+                            position = cle_vote[:-1].capitalize()
         results.append({
             "numero": numero,
             "date": date,
