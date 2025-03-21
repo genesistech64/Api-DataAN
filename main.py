@@ -32,6 +32,7 @@ def download_and_parse_scrutins():
     
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.endswith(".json")]
+        print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des scrutins.")
         
         scrutins_data.clear()
         for json_file in json_files:
@@ -53,6 +54,7 @@ def download_and_parse_deputes():
     
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.startswith("json/") and name.endswith(".json")]
+        print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des députés et organes.")
 
         deputes_data.clear()
         deports_data.clear()
@@ -65,12 +67,16 @@ def download_and_parse_deputes():
                     if "acteur" in data:  # 📌 Députés
                         uid = data["acteur"]["uid"]["#text"]
                         deputes_data[uid] = data["acteur"]
+                    elif "uid" in data and "refActeur" in data:  # 📌 Déports
+                        deports_data.append(data)
                     elif "organe" in data and "uid" in data["organe"]:  # 📌 Organes
-                        organes_data[data["organe"]["uid"]] = data["organe"].get("libelle", "Inconnu")
+                        organe_id = data["organe"]["uid"]
+                        organes_data[organe_id] = data["organe"].get("libelle", "Inconnu")
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
 
     print(f"✅ {len(deputes_data)} députés chargés.")
+    print(f"✅ {len(deports_data)} déports chargés.")
     print(f"✅ {len(organes_data)} organes chargés.")
 
 @app.on_event("startup")
@@ -87,27 +93,6 @@ def periodic_update():
         download_and_parse_deputes()
         print("✅ Mise à jour terminée.")
 
-@app.get("/deputes_complets")
-def get_all_deputes():
-    deputes_list = []
-    
-    for uid, info in deputes_data.items():
-        organes = []
-        if "mandats" in info and "mandat" in info["mandats"]:
-            for mandat in info["mandats"]["mandat"]:
-                organe_ref = mandat.get("organes", {}).get("organeRef")
-                if organe_ref in organes_data:
-                    organes.append({"id": organe_ref, "nom": organes_data[organe_ref]})
-        
-        deputes_list.append({
-            "id": uid,
-            "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
-            "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", ""),
-            "organes": organes
-        })
-    
-    return deputes_list
-
 @app.get("/depute")
 def get_depute(
     depute_id: str = Query(None, description="Identifiant du député, ex: PA1592"),
@@ -115,22 +100,38 @@ def get_depute(
 ):
     if nom:
         matching_deputes = [
-            {"id": uid, "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""), "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")}
+            {
+                "id": uid,
+                "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
+                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")
+            }
             for uid, info in deputes_data.items()
             if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
         ]
         
-        return matching_deputes if matching_deputes else {"error": "Député non trouvé"}
+        if len(matching_deputes) == 0:
+            return {"error": "Député non trouvé"}
+        elif len(matching_deputes) == 1:
+            return deputes_data[matching_deputes[0]["id"]]
+        else:
+            return {"error": "Plusieurs députés trouvés, précisez l'identifiant", "options": matching_deputes}
 
     if depute_id:
-        return deputes_data.get(depute_id, {"error": "Député non trouvé"})
+        depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
+        if isinstance(depute, dict) and "mandats" in depute and "mandat" in depute["mandats"]:
+            for mandat in depute["mandats"]["mandat"]:
+                organe_ref = mandat.get("organes", {}).get("organeRef")
+                if organe_ref in organes_data:
+                    mandat["nomOrgane"] = organes_data[organe_ref]  # 🔄 Remplace l'ID par le libellé
+        
+        return depute
 
     return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
 
 @app.get("/votes")
 def get_votes(depute_id: str = Query(...)):
     results = []
-
+    
     for entry in scrutins_data:
         scr = entry.get("scrutin", {})
         numero = scr.get("numero")
@@ -142,17 +143,34 @@ def get_votes(depute_id: str = Query(...)):
         for groupe in groupes:
             votes = groupe.get("vote", {}).get("decompteNominatif", {})
             for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
-                bloc = votes.get(cle_vote) or {}  # Évite None.get()
-                votants = bloc.get("votant", [])
-                votants = [votants] if isinstance(votants, dict) else votants
+                bloc = votes.get(cle_vote)
+                if bloc and isinstance(bloc, dict):
+                    votants = bloc.get("votant", [])
+                    if isinstance(votants, dict):
+                        votants = [votants]
+                else:
+                    votants = []
 
                 for v in votants:
                     if v.get("acteurRef") == depute_id:
                         position = cle_vote[:-1].capitalize()
 
-        results.append({"numero": numero, "date": date, "titre": titre, "position": position})
+        results.append({
+            "numero": numero,
+            "date": date,
+            "titre": titre,
+            "position": position
+        })
 
-    return results if results else {"error": "Aucun vote trouvé pour ce député."}
+    if not results:
+        return {"error": "Aucun vote trouvé pour ce député."}
+
+    return results
+
+@app.get("/deports")
+def get_deports(depute_id: str = Query(...)):
+    deports = [d for d in deports_data if d.get("refActeur") == depute_id]
+    return deports if deports else {"message": "Aucun déport trouvé pour ce député."}
 
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
