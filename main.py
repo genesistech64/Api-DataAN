@@ -95,7 +95,10 @@ def periodic_update():
 @app.get("/votes")
 def get_votes(depute_id: str = Query(None), nom: str = Query(None)):
     if nom:
-        matching_deputes = [uid for uid, info in deputes_data.items() if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()]
+        matching_deputes = [
+            uid for uid, info in deputes_data.items()
+            if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
+        ]
         
         if len(matching_deputes) == 0:
             return {"error": "Député non trouvé"}
@@ -138,8 +141,28 @@ def get_votes(depute_id: str = Query(None), nom: str = Query(None)):
     return results
 
 @app.get("/depute")
-def get_depute(depute_id: str = Query(...)):
-    return deputes_data.get(depute_id, {"error": "Député non trouvé"})
+def get_depute(
+    depute_id: str = Query(None, description="Identifiant du député, ex: PA1592"),
+    nom: str = Query(None, description="Nom du député, ex: Habib")
+):
+    if nom:
+        matching_deputes = [
+            {"id": uid, "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""), "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")}
+            for uid, info in deputes_data.items()
+            if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
+        ]
+        
+        if len(matching_deputes) == 0:
+            return {"error": "Député non trouvé"}
+        elif len(matching_deputes) == 1:
+            return deputes_data[matching_deputes[0]["id"]]
+        else:
+            return {"error": "Plusieurs députés trouvés, veuillez préciser l'identifiant", "options": matching_deputes}
+
+    if depute_id:
+        return deputes_data.get(depute_id, {"error": "Député non trouvé"})
+
+    return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
 
 @app.get("/deports")
 def get_deports(depute_id: str = Query(...)):
@@ -149,4 +172,3 @@ def get_deports(depute_id: str = Query(...)):
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
     return organes_data.get(organe_id, {"error": "Aucun organe trouvé"})
-
