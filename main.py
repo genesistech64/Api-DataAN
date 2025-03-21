@@ -6,7 +6,7 @@ import time
 
 app = FastAPI()
 
-# Activer le CORS
+# Activer le CORS pour autoriser les requêtes depuis Lovable ou d'autres frontends
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,7 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# URLs des fichiers de données
+# URLs des fichiers de données de l'Assemblée
 SCRUTIN_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/scrutins/Scrutins.json.zip"
 DEPUTE_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/amo/deputes_actifs_mandats_actifs_organes/AMO10_deputes_actifs_mandats_actifs_organes.json.zip"
 
@@ -24,7 +24,7 @@ deputes_data = {}
 deports_data = []
 organes_data = {}
 
-# 📥 Téléchargement et extraction des scrutins
+# Téléchargement et extraction des scrutins
 def download_and_parse_scrutins():
     global scrutins_data
     print("📥 Téléchargement des scrutins...")
@@ -33,7 +33,7 @@ def download_and_parse_scrutins():
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.endswith(".json")]
         print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des scrutins.")
-
+        
         scrutins_data.clear()
         for json_file in json_files:
             with z.open(json_file) as f:
@@ -41,19 +41,19 @@ def download_and_parse_scrutins():
                     data = json.load(f)
                     if isinstance(data, dict) and "scrutin" in data:
                         scrutins_data.append(data)
-                except json.JSONDecodeError as e:
-                    print(f"❌ Erreur JSON dans {json_file}: {e}")
-
+                except json.JSONDecodeError:
+                    print(f"❌ Erreur de parsing JSON : {json_file}")
+    
     print(f"✅ {len(scrutins_data)} scrutins chargés.")
 
-# 📥 Téléchargement et extraction des députés et organes
+# Téléchargement et extraction des députés et organes
 def download_and_parse_deputes():
     global deputes_data, deports_data, organes_data
     print("📥 Téléchargement des données des députés et organes...")
     r = requests.get(DEPUTE_URL)
     
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-        json_files = [name for name in z.namelist()]
+        json_files = [name for name in z.namelist() if name.startswith("json/") and name.endswith(".json")]
         print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des députés et organes.")
 
         deputes_data.clear()
@@ -64,33 +64,16 @@ def download_and_parse_deputes():
             with z.open(json_file) as f:
                 try:
                     data = json.load(f)
-                    
-                    # 📌 Chargement des députés
-                    if "acteur" in data:
+                    if "acteur" in data:  # Députés
                         uid = data["acteur"]["uid"]["#text"]
                         deputes_data[uid] = data["acteur"]
-
-                    # 📌 Chargement des déports
-                    elif "uid" in data and "refActeur" in data:
+                    elif "uid" in data and "refActeur" in data:  # Déports
                         deports_data.append(data)
-
-                    # 📌 Chargement des organes
-                    elif "organe" in data:
-                        organe = data["organe"]
-                        uid = organe["uid"]
-                        
-                        # 🔄 Vérification du libellé de l'organe
-                        libelle = organe.get("libelle")
-                        if isinstance(libelle, dict) and "text" in libelle:
-                            organes_data[uid] = libelle["text"]
-                        elif isinstance(libelle, str):
-                            organes_data[uid] = libelle
-                        else:
-                            organes_data[uid] = f"Organisme inconnu ({uid})"
-                
-                except json.JSONDecodeError as e:
-                    print(f"❌ Erreur JSON dans {json_file}: {e}")
-
+                    elif "uid" in data and "libelle" in data:  # Organes
+                        organes_data[data["uid"]] = data
+                except json.JSONDecodeError:
+                    print(f"❌ Erreur de parsing JSON : {json_file}")
+    
     print(f"✅ {len(deputes_data)} députés chargés.")
     print(f"✅ {len(deports_data)} déports chargés.")
     print(f"✅ {len(organes_data)} organes chargés.")
@@ -103,48 +86,53 @@ def startup_event():
 
 def periodic_update():
     while True:
-        time.sleep(172800)  # Mise à jour toutes les 48 heures
+        time.sleep(172800)  # Attendre 48 heures
         print("🔄 Mise à jour automatique des données...")
         download_and_parse_scrutins()
         download_and_parse_deputes()
         print("✅ Mise à jour terminée.")
 
-@app.get("/depute")
-def get_depute(
-    depute_id: str = Query(None, description="Identifiant du député, ex: PA1592"),
-    nom: str = Query(None, description="Nom du député, ex: Habib")
-):
-    if nom:
-        matching_deputes = [
-            {
-                "id": uid,
-                "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
-                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")
-            }
-            for uid, info in deputes_data.items()
-            if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
-        ]
+@app.get("/votes")
+def get_votes(depute_id: str = Query(...)):
+    results = []
+    votes_found = False
+    
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        numero = scr.get("numero")
+        date = scr.get("dateScrutin")
+        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+        position = "Absent"
         
-        if len(matching_deputes) == 0:
-            return {"error": "Député non trouvé"}
-        elif len(matching_deputes) == 1:
-            depute_id = matching_deputes[0]["id"]
-        else:
-            return {"error": "Plusieurs députés trouvés, précisez l'identifiant", "options": matching_deputes}
-
-    if depute_id:
-        depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
+        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
         
-        # 🔄 Remplacement des ID des organes par leurs noms
-        if isinstance(depute, dict) and "mandats" in depute and "mandat" in depute["mandats"]:
-            for mandat in depute["mandats"]["mandat"]:
-                organe_ref = mandat.get("organes", {}).get("organeRef")
-                if organe_ref:
-                    mandat["nomOrgane"] = organes_data.get(organe_ref, f"Organisme inconnu ({organe_ref})")
+        for groupe in groupes:
+            votes = groupe.get("vote", {}).get("decompteNominatif", {})
+            for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
+                bloc = votes.get(cle_vote, {})
+                votants = bloc.get("votant")
+                if isinstance(votants, dict):
+                    votants = [votants]
+                
+                if votants:
+                    for v in votants:
+                        if v.get("acteurRef") == depute_id:
+                            position = cle_vote[:-1].capitalize()
+                            votes_found = True
+                            
+        results.append({
+            "numero": numero,
+            "date": date,
+            "titre": titre,
+            "position": position
+        })
+    
+    return results if votes_found else {"message": "Aucun vote trouvé pour ce député."}
 
-        return depute
-
-    return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
+@app.get("/deports")
+def get_deports(depute_id: str = Query(...)):
+    deports = [d for d in deports_data if d.get("refActeur") == depute_id]
+    return deports if deports else {"message": "Aucun déport trouvé pour ce député."}
 
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
