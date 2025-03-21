@@ -96,28 +96,45 @@ def get_depute(depute_id: str = Query(None), nom: str = Query(None), legislature
     return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
 
 @app.get("/votes")
-def get_votes(depute_id: str = Query(...), legislature: str = Query(None)):
+def get_votes(depute_id: str = Query(...)):
     results = []
+
     for entry in scrutins_data:
         scr = entry.get("scrutin", {})
+        numero = scr.get("numero")
+        date = scr.get("dateScrutin")
+        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
         position = "Absent"
-        
+
         groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
         for groupe in groupes:
             votes = groupe.get("vote", {}).get("decompteNominatif", {})
+
             for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
-                bloc = votes.get(cle_vote, {})
-                votants = bloc.get("votant", []) if isinstance(bloc, dict) else []
-                for v in votants:
-                    if v.get("acteurRef") == depute_id:
-                        position = cle_vote[:-1].capitalize()
+                bloc = votes.get(cle_vote)
+                if bloc and isinstance(bloc, dict):
+                    votants = bloc.get("votant", [])
+
+                    # Assurer que votants est toujours une liste
+                    if isinstance(votants, dict):
+                        votants = [votants]
+                    
+                    # 🔹 Vérification avant d'utiliser .get()
+                    for v in votants:
+                        if isinstance(v, dict) and v.get("acteurRef") == depute_id:
+                            position = cle_vote[:-1].capitalize()
+
         results.append({
-            "numero": scr.get("numero"),
-            "date": scr.get("dateScrutin"),
-            "titre": scr.get("objet", {}).get("libelle", scr.get("titre", "")),
+            "numero": numero,
+            "date": date,
+            "titre": titre,
             "position": position
         })
-    return results if results else {"error": "Aucun vote trouvé"}
+
+    if not results:
+        return {"error": "Aucun vote trouvé pour ce député."}
+
+    return results
 
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
