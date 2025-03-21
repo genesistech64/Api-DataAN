@@ -71,7 +71,7 @@ def download_and_parse_deputes():
                         deports_data.append(data)
                     elif "organe" in data and "uid" in data["organe"]:  # 📌 Organes
                         organe_id = data["organe"]["uid"]
-                        organes_data[organe_id] = data["organe"].get("libelle", "Inconnu")
+                        organes_data[organe_id] = data["organe"]
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
 
@@ -105,7 +105,7 @@ def get_depute(
                 "id": uid,
                 "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
                 "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", ""),
-                "nomOrgane": organes_data.get(organe_id, "Inconnu")
+                "nomOrgane": organes_data.get(organe_id, {}).get("libelle", "Inconnu")
             }
             for uid, info in deputes_data.items()
             if any(
@@ -117,12 +117,7 @@ def get_depute(
 
     if nom:
         matching_deputes = [
-            {
-                "id": uid,
-                "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
-                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")
-            }
-            for uid, info in deputes_data.items()
+            info for uid, info in deputes_data.items()
             if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
         ]
         return matching_deputes if matching_deputes else {"error": "Député non trouvé"}
