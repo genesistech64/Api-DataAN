@@ -46,11 +46,6 @@ def download_and_parse_scrutins():
 
     print(f"✅ {len(scrutins_data)} scrutins chargés.")
 
-    # 🔎 Vérification du stockage des scrutins
-    if scrutins_data:
-        for scr in scrutins_data[:5]:  # Afficher les 5 premiers scrutins
-            print(f"📊 Scrutin {scr.get('scrutin', {}).get('numero')} - {scr.get('scrutin', {}).get('titre')}")
-
 # 📥 Téléchargement et extraction des députés, déports et organes
 def download_and_parse_deputes():
     global deputes_data, deports_data, organes_data
@@ -115,15 +110,14 @@ def get_votes(depute_id: str = Query(...)):
         for groupe in groupes:
             votes = groupe.get("vote", {}).get("decompteNominatif", {})
             for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
-              bloc = votes.get(cle_vote)
-if bloc and isinstance(bloc, dict):  # Vérifier si le bloc de votes est un dictionnaire valide
-    votants = bloc.get("votant", [])
-    if isinstance(votants, dict):  # Gérer le cas d'un seul votant
-        votants = [votants]
-else:
-    votants = []
-                if isinstance(votants, dict):
-                    votants = [votants]
+                bloc = votes.get(cle_vote)
+                if bloc and isinstance(bloc, dict):  # Vérifier si le bloc de votes est un dictionnaire valide
+                    votants = bloc.get("votant", [])
+                    if isinstance(votants, dict):  # Gérer le cas d'un seul votant
+                        votants = [votants]
+                else:
+                    votants = []
+
                 for v in votants:
                     if v.get("acteurRef") == depute_id:
                         position = cle_vote[:-1].capitalize()
