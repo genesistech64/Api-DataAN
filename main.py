@@ -115,7 +115,13 @@ def get_votes(depute_id: str = Query(...)):
         for groupe in groupes:
             votes = groupe.get("vote", {}).get("decompteNominatif", {})
             for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
-                votants = votes.get(cle_vote, {}).get("votant", [])
+              bloc = votes.get(cle_vote)
+if bloc and isinstance(bloc, dict):  # Vérifier si le bloc de votes est un dictionnaire valide
+    votants = bloc.get("votant", [])
+    if isinstance(votants, dict):  # Gérer le cas d'un seul votant
+        votants = [votants]
+else:
+    votants = []
                 if isinstance(votants, dict):
                     votants = [votants]
                 for v in votants:
