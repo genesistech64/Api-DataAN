@@ -24,7 +24,7 @@ deputes_data = {}
 deports_data = []
 organes_data = {}
 
-# Téléchargement et extraction des scrutins
+# 📥 Téléchargement et extraction des scrutins
 def download_and_parse_scrutins():
     global scrutins_data
     print("📥 Téléchargement des scrutins...")
@@ -41,12 +41,17 @@ def download_and_parse_scrutins():
                     data = json.load(f)
                     if isinstance(data, dict) and "scrutin" in data:
                         scrutins_data.append(data)
-                except json.JSONDecodeError:
-                    print(f"❌ Erreur de parsing JSON : {json_file}")
-    
+                except json.JSONDecodeError as e:
+                    print(f"❌ Erreur JSON dans {json_file}: {e}")
+
     print(f"✅ {len(scrutins_data)} scrutins chargés.")
 
-# Téléchargement et extraction des députés, déports et organes
+    # 🔎 Vérification du stockage des scrutins
+    if scrutins_data:
+        for scr in scrutins_data[:5]:  # Afficher les 5 premiers scrutins
+            print(f"📊 Scrutin {scr.get('scrutin', {}).get('numero')} - {scr.get('scrutin', {}).get('titre')}")
+
+# 📥 Téléchargement et extraction des députés, déports et organes
 def download_and_parse_deputes():
     global deputes_data, deports_data, organes_data
     print("📥 Téléchargement des données des députés...")
@@ -71,9 +76,9 @@ def download_and_parse_deputes():
                         deports_data.append(data)
                     elif "uid" in data and "libelle" in data:  # Organes
                         organes_data[data["uid"]] = data
-                except json.JSONDecodeError:
-                    print(f"❌ Erreur de parsing JSON : {json_file}")
-    
+                except json.JSONDecodeError as e:
+                    print(f"❌ Erreur JSON dans {json_file}: {e}")
+
     print(f"✅ {len(deputes_data)} députés chargés.")
     print(f"✅ {len(deports_data)} déports chargés.")
     print(f"✅ {len(organes_data)} organes chargés.")
@@ -92,42 +97,56 @@ def periodic_update():
         download_and_parse_deputes()
         print("✅ Mise à jour terminée.")
 
-@app.get("/depute")
-def get_depute(depute_id: str = Query(None), nom: str = Query(None)):
-    if nom:
-        matching_deputes = [
-            {"id": uid, "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""), "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")}
-            for uid, info in deputes_data.items()
-            if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
-        ]
-        if len(matching_deputes) == 0:
-            return {"error": "Député non trouvé"}
-        elif len(matching_deputes) > 1:
-            return {"error": "Plusieurs députés trouvés, veuillez préciser l'identifiant", "options": matching_deputes}
-        else:
-            depute_id = matching_deputes[0]["id"]
-    
-    if not depute_id or depute_id not in deputes_data:
-        return {"error": "Député non trouvé"}
+@app.get("/votes")
+def get_votes(depute_id: str = Query(...)):
+    print(f"🔍 Recherche des votes pour {depute_id}...")
 
-    depute_info = deputes_data[depute_id]
+    found = False
+    results = []
     
-    # Recherche du groupe politique et des organes
-    organes_depute = []
-    for mandat in depute_info.get("mandats", {}).get("mandat", []):
-        organe_id = mandat["organes"].get("organeRef")
-        if organe_id in organes_data:
-            organe_info = organes_data[organe_id]
-            organes_depute.append({
-                "type": organe_info.get("typeOrgane"),
-                "nom": organe_info.get("libelle"),
-                "date_debut": organe_info.get("dateDebut"),
-                "date_fin": organe_info.get("dateFin"),
-                "legislature": organe_info.get("legislature")
-            })
-    
-    depute_info["organes"] = organes_depute
-    return depute_info
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        numero = scr.get("numero")
+        date = scr.get("dateScrutin")
+        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+        position = "Absent"
+
+        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+        for groupe in groupes:
+            votes = groupe.get("vote", {}).get("decompteNominatif", {})
+            for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
+                votants = votes.get(cle_vote, {}).get("votant", [])
+                if isinstance(votants, dict):
+                    votants = [votants]
+                for v in votants:
+                    if v.get("acteurRef") == depute_id:
+                        position = cle_vote[:-1].capitalize()
+                        found = True
+
+        results.append({
+            "numero": numero,
+            "date": date,
+            "titre": titre,
+            "position": position
+        })
+
+    if not found:
+        print(f"⚠️ Aucun vote trouvé pour {depute_id} !")
+        return {"error": "Aucun vote trouvé pour ce député."}
+
+    return results
+
+@app.get("/depute")
+def get_depute(depute_id: str = Query(...)):
+    return deputes_data.get(depute_id, {"error": "Député non trouvé"})
+
+@app.get("/deports")
+def get_deports(depute_id: str = Query(...)):
+    deports = [d for d in deports_data if d.get("refActeur") == depute_id]
+    if not deports:
+        print(f"⚠️ Aucun déport trouvé pour {depute_id}.")
+        return {"message": "Ce député n'a aucun déport enregistré."}
+    return deports
 
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
