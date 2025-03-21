@@ -61,10 +61,8 @@ def download_and_parse_deputes():
                     data = json.load(f)
                     acteur = data.get("acteur", {})
                     uid = acteur.get("uid", {}).get("#text")
-                    nom = acteur.get("etatCivil", {}).get("ident", {}).get("nom", "")
-                    prenom = acteur.get("etatCivil", {}).get("ident", {}).get("prenom", "")
-                    if uid and nom and prenom:
-                        deputes_data[uid] = {"nom": nom, "prenom": prenom}
+                    if uid:
+                        deputes_data[uid] = acteur  # Stocker toutes les informations de l'acteur
                 except json.JSONDecodeError:
                     print(f"Erreur de parsing JSON dans le fichier : {json_file}")
     
@@ -87,7 +85,7 @@ def periodic_update():
 @app.get("/votes")
 def get_votes(depute_id: str = Query(None, description="Identifiant du député, ex: PA1592"), nom: str = Query(None, description="Nom du député")):
     if nom:
-        matching_deputes = [uid for uid, info in deputes_data.items() if info["nom"].lower() == nom.lower()]
+        matching_deputes = [uid for uid, info in deputes_data.items() if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()]
         
         if len(matching_deputes) == 0:
             return {"error": "Député non trouvé"}
@@ -128,3 +126,9 @@ def get_votes(depute_id: str = Query(None, description="Identifiant du député,
             "position": position
         })
     return results
+
+@app.get("/depute")
+def get_depute(depute_id: str = Query(..., description="Identifiant du député, ex: PA1592")):
+    if depute_id not in deputes_data:
+        return {"error": "Député non trouvé"}
+    return deputes_data[depute_id]
