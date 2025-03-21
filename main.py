@@ -135,15 +135,44 @@ def get_depute(
 
     if depute_id:
         depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
-        if isinstance(depute, dict) and "mandats" in depute and "mandat" in depute["mandats"]:
-            for mandat in depute["mandats"]["mandat"]:
-                organe_ref = mandat.get("organes", {}).get("organeRef")
-                if organe_ref in organes_data:
-                    mandat["nomOrgane"] = organes_data[organe_ref]  # 🔄 Remplace l'ID par le libellé
-        
         return depute
 
     return {"error": "Veuillez fournir un identifiant (`depute_id`), un nom (`nom`) ou un organe (`organe_id`)."}
+
+@app.get("/votes")
+def get_votes(depute_id: str = Query(...)):
+    results = []
+    votes_found = False
+    
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        numero = scr.get("numero")
+        date = scr.get("dateScrutin")
+        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+        position = "Absent"
+
+        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+        for groupe in groupes:
+            votes = groupe.get("vote", {}).get("decompteNominatif", {})
+            for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
+                bloc = votes.get(cle_vote, {})
+                votants = bloc.get("votant", [])
+                if isinstance(votants, dict):
+                    votants = [votants]
+
+                for v in votants:
+                    if v.get("acteurRef") == depute_id:
+                        position = cle_vote[:-1].capitalize()
+                        votes_found = True
+
+        results.append({
+            "numero": numero,
+            "date": date,
+            "titre": titre,
+            "position": position
+        })
+
+    return results if votes_found else {"message": "Aucun vote trouvé pour ce député."}
 
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
