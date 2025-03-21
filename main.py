@@ -6,7 +6,7 @@ import time
 
 app = FastAPI()
 
-# Activer le CORS pour autoriser les requêtes depuis Lovable ou d'autres frontends
+# Activer le CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,7 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# URLs des fichiers de données de l'Assemblée
+# URLs des fichiers de données
 SCRUTIN_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/scrutins/Scrutins.json.zip"
 DEPUTE_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/amo/deputes_actifs_mandats_actifs_organes/AMO10_deputes_actifs_mandats_actifs_organes.json.zip"
 
@@ -33,7 +33,7 @@ def download_and_parse_scrutins():
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.endswith(".json")]
         print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des scrutins.")
-        
+
         scrutins_data.clear()
         for json_file in json_files:
             with z.open(json_file) as f:
@@ -46,7 +46,7 @@ def download_and_parse_scrutins():
 
     print(f"✅ {len(scrutins_data)} scrutins chargés.")
 
-# 📥 Téléchargement et extraction des députés, déports et organes
+# 📥 Téléchargement et extraction des députés et organes
 def download_and_parse_deputes():
     global deputes_data, deports_data, organes_data
     print("📥 Téléchargement des données des députés et organes...")
@@ -76,9 +76,17 @@ def download_and_parse_deputes():
 
                     # 📌 Chargement des organes
                     elif "organe" in data:
-                        uid = data["organe"]["uid"]
-                        libelle = data["organe"]["libelle"]["text"] if "libelle" in data["organe"] else "Inconnu"
-                        organes_data[uid] = libelle
+                        organe = data["organe"]
+                        uid = organe["uid"]
+                        
+                        # 🔄 Vérification du libellé de l'organe
+                        libelle = organe.get("libelle")
+                        if isinstance(libelle, dict) and "text" in libelle:
+                            organes_data[uid] = libelle["text"]
+                        elif isinstance(libelle, str):
+                            organes_data[uid] = libelle
+                        else:
+                            organes_data[uid] = f"Organisme inconnu ({uid})"
                 
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
@@ -95,7 +103,7 @@ def startup_event():
 
 def periodic_update():
     while True:
-        time.sleep(172800)  # Attendre 48 heures
+        time.sleep(172800)  # Mise à jour toutes les 48 heures
         print("🔄 Mise à jour automatique des données...")
         download_and_parse_scrutins()
         download_and_parse_deputes()
@@ -141,34 +149,3 @@ def get_depute(
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
     return organes_data.get(organe_id, {"error": "Aucun organe trouvé"})
-
-@app.get("/votes")
-def get_votes(depute_id: str = Query(...)):
-    results = []
-    
-    for entry in scrutins_data:
-        scr = entry.get("scrutin", {})
-        numero = scr.get("numero")
-        date = scr.get("dateScrutin")
-        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
-        position = "Absent"
-
-        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
-        for groupe in groupes:
-            votes = groupe.get("vote", {}).get("decompteNominatif", {})
-            for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
-                bloc = votes.get(cle_vote)
-                votants = bloc.get("votant", []) if isinstance(bloc, dict) else []
-
-                for v in (votants if isinstance(votants, list) else [votants]):
-                    if v.get("acteurRef") == depute_id:
-                        position = cle_vote[:-1].capitalize()
-
-        results.append({
-            "numero": numero,
-            "date": date,
-            "titre": titre,
-            "position": position
-        })
-
-    return results if results else {"error": "Aucun vote trouvé pour ce député."}
