@@ -22,12 +22,21 @@ def download_and_parse():
     global scrutins_data
     print("Téléchargement des scrutins...")
     r = requests.get(SCRUTIN_URL)
+    
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-        # Trouver dynamiquement le fichier .json dans l’archive (nom variable)
-        filename = [name for name in z.namelist() if name.endswith(".json")][0]
-        print(f"Fichier trouvé dans le zip : {filename}")
-        with z.open(filename) as f:
-            scrutins_data = json.load(f)
+        json_files = [name for name in z.namelist() if name.endswith(".json")]
+        print(f"{len(json_files)} fichiers JSON trouvés dans le zip.")
+        
+        # Charger chaque scrutin et les fusionner
+        for json_file in json_files:
+            with z.open(json_file) as f:
+                try:
+                    data = json.load(f)
+                    if isinstance(data, dict) and "scrutin" in data:
+                        scrutins_data.append(data)  # Ajoute uniquement les scrutins valides
+                except json.JSONDecodeError:
+                    print(f"Erreur de parsing JSON dans le fichier : {json_file}")
+
     print(f"{len(scrutins_data)} scrutins chargés.")
 
 @app.get("/votes")
@@ -48,7 +57,7 @@ def get_votes(depute_id: str = Query(..., description="Identifiant du député, 
                 if not bloc:
                     continue
                 votants = bloc.get("votant")
-                if isinstance(votants, dict):  # cas où il n'y a qu'un seul votant
+                if isinstance(votants, dict):  # Cas où il n'y a qu'un seul votant
                     votants = [votants]
                 if votants:
                     for v in votants:
