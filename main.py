@@ -111,12 +111,6 @@ def get_depute(
                 "id": uid,
                 "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
                 "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", ""),
-                "organes": [
-                    {"id": mandat.get("organes", {}).get("organeRef", ""), 
-                     "nom": organes_data.get(mandat.get("organes", {}).get("organeRef", ""), {}).get("libelle", "Inconnu")}
-                    for mandat in info.get("mandats", {}).get("mandat", [])
-                    if isinstance(mandat, dict)
-                ]
             }
             for uid, info in deputes_data.items()
             if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
@@ -125,16 +119,44 @@ def get_depute(
         return matching_deputes if matching_deputes else {"error": "Député non trouvé"}
 
     if depute_id:
-        depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
-        if isinstance(depute, dict) and "mandats" in depute and "mandat" in depute["mandats"]:
-            for mandat in depute["mandats"]["mandat"]:
-                organe_ref = mandat.get("organes", {}).get("organeRef")
-                if organe_ref in organes_data:
-                    mandat["nomOrgane"] = organes_data[organe_ref]["libelle"]  # 🔄 Remplace l'ID par le libellé
-        
-        return depute
+        return deputes_data.get(depute_id, {"error": "Député non trouvé"})
 
     return {"error": "Veuillez fournir un identifiant (`depute_id`), un nom (`nom`) ou un organe (`organe_id`)"}
+
+@app.get("/votes")
+def get_votes(depute_id: str = Query(..., description="Identifiant du député, ex: PA1592")):
+    results = []
+
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        numero = scr.get("numero")
+        date = scr.get("dateScrutin")
+        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+        position = "Absent"
+
+        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+        for groupe in groupes:
+            votes = groupe.get("vote", {}).get("decompteNominatif", {})
+
+            for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
+                bloc = votes.get(cle_vote, {})
+                votants = bloc.get("votant", [])
+
+                if isinstance(votants, dict):
+                    votants = [votants]
+
+                for v in votants:
+                    if isinstance(v, dict) and v.get("acteurRef") == depute_id:
+                        position = cle_vote[:-1].capitalize()
+
+        results.append({
+            "numero": numero,
+            "date": date,
+            "titre": titre,
+            "position": position
+        })
+
+    return results if results else {"error": "Aucun vote trouvé pour ce député."}
 
 @app.get("/organes")
 def get_organes(organe_id: str = Query(..., description="Identifiant de l'organe, ex: PO845401")):
