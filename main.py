@@ -101,13 +101,7 @@ def get_depute(
 ):
     if organe_id:
         deputes_in_organe = [
-            {
-                "id": uid,
-                "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
-                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", ""),
-                "nomOrgane": organes_data.get(organe_id, {}).get("libelle", "Inconnu")
-            }
-            for uid, info in deputes_data.items()
+            info for uid, info in deputes_data.items()
             if any(
                 mandat.get("organes", {}).get("organeRef") == organe_id
                 for mandat in info.get("mandats", {}).get("mandat", [])
@@ -142,7 +136,7 @@ def get_votes(depute_id: str = Query(...)):
         for groupe in groupes:
             votes = groupe.get("vote", {}).get("decompteNominatif", {})
             for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
-                bloc = votes.get(cle_vote, {})
+                bloc = votes.get(cle_vote)
                 if not bloc:
                     continue  # 🛠 Évite l'erreur si bloc est None
                 
