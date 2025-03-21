@@ -1,12 +1,13 @@
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from supabase import create_client
 import requests, zipfile, io, json
 import threading
 import time
 
 app = FastAPI()
 
-# Activer le CORS pour permettre les requêtes externes
+# Activer le CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,163 +16,94 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Connexion à Supabase
+SUPABASE_URL = "https://jjwpejhbwjbbkgxsfhnj.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impqd3Blamhid2piYmtneHNmaG5qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDI1ODE0OTIsImV4cCI6MjA1ODE1NzQ5Mn0.aKHWSXkuTmUCkpbgU5lJ-wg3ipq_-gFoC6YBJCXu9Tw"
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 # URLs des fichiers de l'Assemblée nationale
 SCRUTIN_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/scrutins/Scrutins.json.zip"
 DEPUTE_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/amo/deputes_actifs_mandats_actifs_organes/AMO10_deputes_actifs_mandats_actifs_organes.json.zip"
 
-scrutins_data = []
-deputes_data = {}
-deports_data = []
-organes_data = {}
+# 📥 Mise à jour des données depuis l'Assemblée nationale
 
-# 📥 Téléchargement et extraction des scrutins
-def download_and_parse_scrutins():
-    global scrutins_data
-    print("📥 Téléchargement des scrutins...")
-    r = requests.get(SCRUTIN_URL)
-    
-    with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-        json_files = [name for name in z.namelist() if name.endswith(".json")]
-        print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des scrutins.")
-        
-        scrutins_data.clear()
-        for json_file in json_files:
-            with z.open(json_file) as f:
-                try:
-                    data = json.load(f)
-                    if isinstance(data, dict) and "scrutin" in data:
-                        scrutins_data.append(data)
-                except json.JSONDecodeError as e:
-                    print(f"❌ Erreur JSON dans {json_file}: {e}")
-
-    print(f"✅ {len(scrutins_data)} scrutins chargés.")
-
-# 📥 Téléchargement et extraction des députés et organes
-def download_and_parse_deputes():
-    global deputes_data, deports_data, organes_data
-    print("📥 Téléchargement des données des députés et organes...")
+def update_data():
+    """ Télécharge et met à jour la base Supabase avec les députés et organes """
+    print("📥 Mise à jour des données...")
     r = requests.get(DEPUTE_URL)
-    
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.startswith("json/") and name.endswith(".json")]
-        print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des députés et organes.")
-
-        deputes_data.clear()
-        deports_data.clear()
-        organes_data.clear()
-
+        
         for json_file in json_files:
             with z.open(json_file) as f:
                 try:
                     data = json.load(f)
-                    if "acteur" in data:  # 📌 Députés
+                    if "acteur" in data:
                         uid = data["acteur"]["uid"]["#text"]
-                        deputes_data[uid] = data["acteur"]
-                    elif "uid" in data and "refActeur" in data:  # 📌 Déports
-                        deports_data.append(data)
-                    elif "organe" in data and "uid" in data["organe"]:  # 📌 Organes
+                        supabase.from_('deputies').upsert({
+                            "id": uid,
+                            "prenom": data["acteur"]["etatCivil"]["ident"].get("prenom", ""),
+                            "nom": data["acteur"]["etatCivil"]["ident"].get("nom", ""),
+                            "profession": data["acteur"].get("profession", "Non renseignée"),
+                            "last_updated": "now()"
+                        }).execute()
+                    elif "organe" in data:
                         organe_id = data["organe"]["uid"]
-                        organes_data[organe_id] = data["organe"].get("libelle", "Inconnu")
+                        supabase.from_('organes').upsert({
+                            "uid": organe_id,
+                            "nom": data["organe"].get("libelle", "Inconnu"),
+                            "type": data["organe"].get("type", ""),
+                            "date_debut": data["organe"].get("dateDebut", ""),
+                            "date_fin": data["organe"].get("dateFin", "")
+                        }).execute()
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
+    print("✅ Mise à jour terminée.")
 
-    print(f"✅ {len(deputes_data)} députés chargés.")
-    print(f"✅ {len(deports_data)} déports chargés.")
-    print(f"✅ {len(organes_data)} organes chargés.")
+@app.get("/update_data")
+def trigger_update():
+    threading.Thread(target=update_data).start()
+    return {"message": "Mise à jour en cours..."}
 
-@app.on_event("startup")
-def startup_event():
-    download_and_parse_scrutins()
-    download_and_parse_deputes()
-    threading.Thread(target=periodic_update, daemon=True).start()
-
-def periodic_update():
-    while True:
-        time.sleep(172800)  # Attendre 48 heures
-        print("🔄 Mise à jour automatique des données...")
-        download_and_parse_scrutins()
-        download_and_parse_deputes()
-        print("✅ Mise à jour terminée.")
-
+# 🔍 Recherche des députés
 @app.get("/depute")
-def get_depute(
-    depute_id: str = Query(None, description="Identifiant du député, ex: PA1592"),
-    nom: str = Query(None, description="Nom du député, ex: Habib")
-):
-    if nom:
-        matching_deputes = [
-            {
-                "id": uid,
-                "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
-                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")
-            }
-            for uid, info in deputes_data.items()
-            if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
-        ]
-        
-        if len(matching_deputes) == 0:
-            return {"error": "Député non trouvé"}
-        elif len(matching_deputes) == 1:
-            return deputes_data[matching_deputes[0]["id"]]
-        else:
-            return {"error": "Plusieurs députés trouvés, précisez l'identifiant", "options": matching_deputes}
-
+def get_depute(depute_id: str = Query(None), nom: str = Query(None)):
     if depute_id:
-        depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
-        if isinstance(depute, dict) and "mandats" in depute and "mandat" in depute["mandats"]:
-            for mandat in depute["mandats"]["mandat"]:
-                organe_ref = mandat.get("organes", {}).get("organeRef")
-                if organe_ref in organes_data:
-                    mandat["nomOrgane"] = organes_data[organe_ref]  # 🔄 Remplace l'ID par le libellé
-        
-        return depute
-
-    return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
-
-@app.get("/votes")
-def get_votes(depute_id: str = Query(...)):
-    results = []
+        response = supabase.from_('deputies').select("*").eq("id", depute_id).execute()
+        return response.data[0] if response.data else {"error": "Député non trouvé"}
     
-    for entry in scrutins_data:
-        scr = entry.get("scrutin", {})
-        numero = scr.get("numero")
-        date = scr.get("dateScrutin")
-        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
-        position = "Absent"
+    if nom:
+        response = supabase.from_('deputies').select("*").eq("nom", nom).execute()
+        return response.data if response.data else {"error": "Député non trouvé"}
+    
+    return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)."}
 
-        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
-        for groupe in groupes:
-            votes = groupe.get("vote", {}).get("decompteNominatif", {})
-            for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
-                bloc = votes.get(cle_vote)
-                if bloc and isinstance(bloc, dict):
-                    votants = bloc.get("votant", [])
-                    if isinstance(votants, dict):
-                        votants = [votants]
-                else:
-                    votants = []
-
-                for v in votants:
-                    if v.get("acteurRef") == depute_id:
-                        position = cle_vote[:-1].capitalize()
-
-        results.append({
-            "numero": numero,
-            "date": date,
-            "titre": titre,
-            "position": position
-        })
-
-    if not results:
-        return {"error": "Aucun vote trouvé pour ce député."}
-
-    return results
-
-@app.get("/deports")
-def get_deports(depute_id: str = Query(...)):
-    deports = [d for d in deports_data if d.get("refActeur") == depute_id]
-    return deports if deports else {"message": "Aucun déport trouvé pour ce député."}
-
+# 📌 Récupération d'un organe et ses députés
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
-    return organes_data.get(organe_id, {"error": "Aucun organe trouvé"})
+    organe_info = supabase.from_('organes').select("*").eq("uid", organe_id).execute()
+    if not organe_info.data:
+        return {"error": "Aucun organe trouvé"}
+    
+    deputes = supabase.from_('deputy_organes').select("deputy_id").eq("organe_uid", organe_id).execute()
+    return {
+        "organe": organe_info.data[0],
+        "deputes": [dep["deputy_id"] for dep in deputes.data]
+    }
+
+# 🗳 Récupération des votes d'un député
+@app.get("/votes")
+def get_votes(depute_id: str = Query(...)):
+    response = supabase.from_('votes').select("*").eq("depute_id", depute_id).execute()
+    return response.data if response.data else {"error": "Aucun vote trouvé pour ce député."}
+
+# 🚫 Récupération des déports d'un député
+@app.get("/deports")
+def get_deports(depute_id: str = Query(...)):
+    response = supabase.from_('deports').select("*").eq("depute_id", depute_id).execute()
+    return response.data if response.data else {"message": "Aucun déport trouvé pour ce député."}
+
+# 🏁 Démarrage de l'update périodique
+@app.on_event("startup")
+def startup_event():
+    threading.Thread(target=update_data).start()
