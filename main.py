@@ -49,12 +49,12 @@ def download_and_parse_scrutins():
 # 📥 Téléchargement et extraction des députés, déports et organes
 def download_and_parse_deputes():
     global deputes_data, deports_data, organes_data
-    print("📥 Téléchargement des données des députés...")
+    print("📥 Téléchargement des données des députés et organes...")
     r = requests.get(DEPUTE_URL)
     
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.startswith("json/") and name.endswith(".json")]
-        print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des députés.")
+        print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des députés et organes.")
 
         deputes_data.clear()
         deports_data.clear()
@@ -64,13 +64,20 @@ def download_and_parse_deputes():
             with z.open(json_file) as f:
                 try:
                     data = json.load(f)
-                    if "acteur" in data:  # 📌 Députés
+                    
+                    # 📌 Chargement des députés
+                    if "acteur" in data:
                         uid = data["acteur"]["uid"]["#text"]
                         deputes_data[uid] = data["acteur"]
-                    elif "uid" in data and "refActeur" in data:  # 📌 Déports
+
+                    # 📌 Chargement des déports
+                    elif "uid" in data and "refActeur" in data:
                         deports_data.append(data)
-                    elif "uid" in data and "libelle" in data:  # 📌 Organes
+
+                    # 📌 Chargement des organes
+                    elif "uid" in data and "libelle" in data:
                         organes_data[data["uid"]] = data["libelle"]["text"]
+                
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
 
@@ -126,6 +133,10 @@ def get_depute(
         return depute
 
     return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
+
+@app.get("/organes")
+def get_organes(organe_id: str = Query(...)):
+    return organes_data.get(organe_id, {"error": "Aucun organe trouvé"})
 
 @app.get("/votes")
 def get_votes(depute_id: str = Query(...)):
