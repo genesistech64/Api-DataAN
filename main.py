@@ -1,6 +1,8 @@
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 import requests, zipfile, io, json
+import threading
+import time
 
 app = FastAPI()
 
@@ -17,7 +19,6 @@ app.add_middleware(
 SCRUTIN_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/scrutins/Scrutins.json.zip"
 scrutins_data = []
 
-@app.on_event("startup")
 def download_and_parse():
     global scrutins_data
     print("Téléchargement des scrutins...")
@@ -28,6 +29,7 @@ def download_and_parse():
         print(f"{len(json_files)} fichiers JSON trouvés dans le zip.")
         
         # Charger chaque scrutin et les fusionner
+        scrutins_data.clear()
         for json_file in json_files:
             with z.open(json_file) as f:
                 try:
@@ -36,8 +38,21 @@ def download_and_parse():
                         scrutins_data.append(data)  # Ajoute uniquement les scrutins valides
                 except json.JSONDecodeError:
                     print(f"Erreur de parsing JSON dans le fichier : {json_file}")
-
+    
     print(f"{len(scrutins_data)} scrutins chargés.")
+
+@app.on_event("startup")
+def startup_event():
+    download_and_parse()
+    # Lancer la mise à jour automatique toutes les 48h (172800 secondes)
+    threading.Thread(target=periodic_update, daemon=True).start()
+
+def periodic_update():
+    while True:
+        time.sleep(172800)  # Attendre 48 heures
+        print("⏳ Mise à jour automatique des scrutins...")
+        download_and_parse()
+        print("✅ Mise à jour terminée.")
 
 @app.get("/votes")
 def get_votes(depute_id: str = Query(..., description="Identifiant du député, ex: PA1592")):
