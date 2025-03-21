@@ -53,7 +53,7 @@ def download_and_parse_deputes():
     r = requests.get(DEPUTE_URL)
     
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
-        json_files = [name for name in z.namelist() if name.startswith("json/") and name.endswith(".json")]
+        json_files = [name for name in z.namelist()]
         print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des députés et organes.")
 
         deputes_data.clear()
@@ -75,8 +75,10 @@ def download_and_parse_deputes():
                         deports_data.append(data)
 
                     # 📌 Chargement des organes
-                    elif "uid" in data and "libelle" in data:
-                        organes_data[data["uid"]] = data["libelle"]["text"]
+                    elif "organe" in data:
+                        uid = data["organe"]["uid"]
+                        libelle = data["organe"]["libelle"]["text"] if "libelle" in data["organe"] else "Inconnu"
+                        organes_data[uid] = libelle
                 
                 except json.JSONDecodeError as e:
                     print(f"❌ Erreur JSON dans {json_file}: {e}")
@@ -124,12 +126,14 @@ def get_depute(
 
     if depute_id:
         depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
+        
+        # 🔄 Remplacement des ID des organes par leurs noms
         if isinstance(depute, dict) and "mandats" in depute and "mandat" in depute["mandats"]:
             for mandat in depute["mandats"]["mandat"]:
                 organe_ref = mandat.get("organes", {}).get("organeRef")
-                if organe_ref and organe_ref in organes_data:
-                    mandat["nomOrgane"] = organes_data[organe_ref]  # 🔄 Remplace l'ID par le libellé
-        
+                if organe_ref:
+                    mandat["nomOrgane"] = organes_data.get(organe_ref, f"Organisme inconnu ({organe_ref})")
+
         return depute
 
     return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
@@ -154,14 +158,9 @@ def get_votes(depute_id: str = Query(...)):
             votes = groupe.get("vote", {}).get("decompteNominatif", {})
             for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
                 bloc = votes.get(cle_vote)
-                if bloc and isinstance(bloc, dict):
-                    votants = bloc.get("votant", [])
-                    if isinstance(votants, dict):
-                        votants = [votants]
-                else:
-                    votants = []
+                votants = bloc.get("votant", []) if isinstance(bloc, dict) else []
 
-                for v in votants:
+                for v in (votants if isinstance(votants, list) else [votants]):
                     if v.get("acteurRef") == depute_id:
                         position = cle_vote[:-1].capitalize()
 
@@ -172,7 +171,4 @@ def get_votes(depute_id: str = Query(...)):
             "position": position
         })
 
-    if not results:
-        return {"error": "Aucun vote trouvé pour ce député."}
-
-    return results
+    return results if results else {"error": "Aucun vote trouvé pour ce député."}
