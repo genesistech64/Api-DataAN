@@ -84,57 +84,55 @@ def periodic_update():
         print("✅ Mise à jour terminée.")
 
 @app.get("/depute")
-def get_depute(depute_id: str = Query(None), nom: str = Query(None), legislature: str = Query(None)):
+def get_depute(
+    depute_id: str = Query(None, description="Identifiant du député, ex: PA1592"),
+    nom: str = Query(None, description="Nom du député, ex: Habib"),
+    organe_id: str = Query(None, description="Identifiant de l'organe, ex: PO845401")
+):
+    if organe_id:
+        deputes_in_organe = [
+            {
+                "id": uid,
+                "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
+                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")
+            }
+            for uid, info in deputes_data.items()
+            if any(
+                mandat.get("organes", {}).get("organeRef") == organe_id
+                for mandat in info.get("mandats", {}).get("mandat", [])
+                if isinstance(mandat, dict)
+            )
+        ]
+        
+        if not deputes_in_organe:
+            return {"error": "Aucun député trouvé pour cet organe."}
+
+        return deputes_in_organe
+
     if nom:
-        deputes = [info for uid, info in deputes_data.items()
-                   if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()]
-        return deputes if deputes else {"error": "Député non trouvé"}
-    
+        matching_deputes = [
+            {
+                "id": uid,
+                "prenom": info.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
+                "nom": info.get("etatCivil", {}).get("ident", {}).get("nom", "")
+            }
+            for uid, info in deputes_data.items()
+            if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
+        ]
+
+        if not matching_deputes:
+            return {"error": "Député non trouvé"}
+        elif len(matching_deputes) == 1:
+            return deputes_data[matching_deputes[0]["id"]]
+        else:
+            return {"error": "Plusieurs députés trouvés, précisez l'identifiant", "options": matching_deputes}
+
     if depute_id:
-        return deputes_data.get(depute_id, {"error": "Député non trouvé"})
-    
-    return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
+        depute = deputes_data.get(depute_id, {"error": "Député non trouvé"})
+        return depute
 
-@app.get("/votes")
-def get_votes(depute_id: str = Query(...)):
-    results = []
+    return {"error": "Veuillez fournir un identifiant (`depute_id`), un nom (`nom`) ou un organe (`organe_id`)"}
 
-    for entry in scrutins_data:
-        scr = entry.get("scrutin", {})
-        numero = scr.get("numero")
-        date = scr.get("dateScrutin")
-        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
-        position = "Absent"
-
-        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
-        for groupe in groupes:
-            votes = groupe.get("vote", {}).get("decompteNominatif", {})
-
-            for cle_vote in ["pours", "contres", "abstentions", "nonVotants"]:
-                bloc = votes.get(cle_vote)
-                if bloc and isinstance(bloc, dict):
-                    votants = bloc.get("votant", [])
-
-                    # Assurer que votants est toujours une liste
-                    if isinstance(votants, dict):
-                        votants = [votants]
-                    
-                    # 🔹 Vérification avant d'utiliser .get()
-                    for v in votants:
-                        if isinstance(v, dict) and v.get("acteurRef") == depute_id:
-                            position = cle_vote[:-1].capitalize()
-
-        results.append({
-            "numero": numero,
-            "date": date,
-            "titre": titre,
-            "position": position
-        })
-
-    if not results:
-        return {"error": "Aucun vote trouvé pour ce député."}
-
-    return results
 
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
