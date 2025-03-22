@@ -19,22 +19,24 @@ app.add_middleware(
 SCRUTIN_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/scrutins/Scrutins.json.zip"
 DEPUTE_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/amo/deputes_actifs_mandats_actifs_organes/AMO10_deputes_actifs_mandats_actifs_organes.json.zip"
 TABULAR_API_BASE = "https://tabular-api.data.gouv.fr/api/resources/092bd7bb-1543-405b-b53c-932ebb49bb8e/data/"
+TABULAR_API_PROFILE = "https://tabular-api.data.gouv.fr/api/resources/092bd7bb-1543-405b-b53c-932ebb49bb8e/profile/"
 
 scrutins_data = []
 deputes_data = {}
 deports_data = []
 organes_data = {}
+tabular_column_name = None
 
 # 📥 Téléchargement et extraction des scrutins
 def download_and_parse_scrutins():
     global scrutins_data
     print("📥 Téléchargement des scrutins...")
     r = requests.get(SCRUTIN_URL)
-    
+
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.endswith(".json")]
         print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des scrutins.")
-        
+
         scrutins_data.clear()
         for json_file in json_files:
             with z.open(json_file) as f:
@@ -52,7 +54,7 @@ def download_and_parse_deputes():
     global deputes_data, deports_data, organes_data
     print("📥 Téléchargement des données des députés et organes...")
     r = requests.get(DEPUTE_URL)
-    
+
     with zipfile.ZipFile(io.BytesIO(r.content)) as z:
         json_files = [name for name in z.namelist() if name.startswith("json/") and name.endswith(".json")]
         print(f"📂 {len(json_files)} fichiers JSON trouvés dans le ZIP des députés et organes.")
@@ -80,10 +82,27 @@ def download_and_parse_deputes():
     print(f"✅ {len(deports_data)} déports chargés.")
     print(f"✅ {len(organes_data)} organes chargés.")
 
+def detect_tabular_column():
+    global tabular_column_name
+    try:
+        response = requests.get(TABULAR_API_PROFILE)
+        if response.status_code == 200:
+            profile = response.json().get("profile", {})
+            headers = profile.get("header", [])
+            for h in headers:
+                if h.lower() == "id":
+                    tabular_column_name = h
+                    print(f"✅ Colonne de liaison détectée : {h}")
+                    return
+            print("⚠️ Colonne 'ID' non trouvée dans le profil de la ressource tabulaire.")
+    except Exception as e:
+        print(f"❌ Erreur lors de la détection de la colonne : {e}")
+
 @app.on_event("startup")
 def startup_event():
     download_and_parse_scrutins()
     download_and_parse_deputes()
+    detect_tabular_column()
     threading.Thread(target=periodic_update, daemon=True).start()
 
 def periodic_update():
@@ -92,6 +111,7 @@ def periodic_update():
         print("🔄 Mise à jour automatique des données...")
         download_and_parse_scrutins()
         download_and_parse_deputes()
+        detect_tabular_column()
         print("✅ Mise à jour terminée.")
 
 @app.get("/depute")
@@ -140,12 +160,14 @@ def get_depute_enrichi(depute_id: str = Query(...)):
     return depute_enrichi
 
 def enrichir_depute_avec_statistiques(depute_id):
+    if not tabular_column_name:
+        return {"error": "Colonne tabulaire inconnue pour la recherche"}
     try:
-        response = requests.get(f"{TABULAR_API_BASE}?ID__exact={depute_id}&page_size=1")
+        response = requests.get(f"{TABULAR_API_BASE}?{tabular_column_name}__exact={depute_id}&page_size=1")
         if response.status_code == 200:
             data = response.json()
             if "data" in data and len(data["data"]) > 0:
-                return data["data"][0]  # retourne la ligne trouvée
+                return data["data"][0]
             else:
                 return {"info": "Aucune statistique trouvée pour ce député"}
         else:
