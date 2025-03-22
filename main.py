@@ -115,6 +115,44 @@ def periodic_update():
         detect_tabular_column()
         print("✅ Mise à jour terminée.")
 
+@app.get("/depute")
+def get_depute(depute_id: str = Query(None), nom: str = Query(None), legislature: str = Query(None)):
+    if depute_id and depute_id in deputes_data:
+        return deputes_data[depute_id]
+
+    if nom:
+        for uid, data in deputes_data.items():
+            ident = data.get("etatCivil", {}).get("ident", {})
+            if ident.get("nom", "").lower() == nom.lower():
+                if not legislature or any(m.get("legislature") == legislature for m in data.get("mandats", {}).get("mandat", [])):
+                    return data
+
+    return {"error": "Député non trouvé"}
+
+@app.get("/depute_enrichi")
+def get_depute_enrichi(depute_id: str = Query(None), nom: str = Query(None), legislature: str = Query(None)):
+    depute = get_depute(depute_id=depute_id, nom=nom, legislature=legislature)
+    if "error" in depute or not tabular_column_name:
+        return depute
+
+    uid = depute.get("uid", {}).get("#text")
+    if not uid:
+        return {"error": "Identifiant UID introuvable dans la fiche du député"}
+
+    try:
+        enrich_url = f"{TABULAR_DEPUTE_BASE}?{tabular_column_name}__exact={uid}&page_size=1"
+        if legislature:
+            enrich_url += f"&legislature__exact={legislature}"
+        response = requests.get(enrich_url)
+        if response.status_code == 200:
+            json_data = response.json()
+            if json_data.get("data"):
+                depute["statistiques"] = json_data["data"][0]
+    except Exception as e:
+        depute["statistiques"] = {"error": str(e)}
+
+    return depute
+
 @app.get("/groupe_enrichi")
 def get_groupe_enrichi(organe_id: str = Query(...), legislature: str = Query(None)):
     if not tabular_group_column_name:
