@@ -28,7 +28,7 @@ deputes_data = {}
 deports_data = []
 organes_data = {}
 tabular_column_name = None
-tabular_group_column_name = "ID"
+tabular_group_column_name = "id"
 
 def download_and_parse_scrutins():
     global scrutins_data
@@ -122,7 +122,7 @@ def get_groupe_enrichi(organe_id: str = Query(...), legislature: str = Query(Non
     try:
         url = f"{TABULAR_GROUPE_BASE}?{tabular_group_column_name}__exact={organe_id}&page_size=1"
         if legislature:
-            url += f"&Legislature__exact={legislature}"
+            url += f"&legislature__exact={legislature}"
         response = requests.get(url)
         if response.status_code == 200:
             data = response.json()
@@ -156,7 +156,7 @@ def get_deputes_par_organe(organe_id: str = Query(...), enrichi: bool = Query(Fa
                         try:
                             enrich_url = f"{TABULAR_DEPUTE_BASE}?{tabular_column_name}__exact={uid}&page_size=1"
                             if legislature:
-                                enrich_url += f"&Legislature__exact={legislature}"
+                                enrich_url += f"&legislature__exact={legislature}"
                             response = requests.get(enrich_url)
                             if response.status_code == 200:
                                 json_data = response.json()
