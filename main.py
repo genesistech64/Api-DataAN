@@ -18,6 +18,7 @@ app.add_middleware(
 # URLs des fichiers de l'Assemblée nationale
 SCRUTIN_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/loi/scrutins/Scrutins.json.zip"
 DEPUTE_URL = "https://data.assemblee-nationale.fr/static/openData/repository/17/amo/deputes_actifs_mandats_actifs_organes/AMO10_deputes_actifs_mandats_actifs_organes.json.zip"
+TABULAR_API_BASE = "https://tabular-api.data.gouv.fr/api/resources/092bd7bb-1543-405b-b53c-932ebb49bb8e/data/"
 
 scrutins_data = []
 deputes_data = {}
@@ -108,7 +109,7 @@ def get_depute(
             for uid, info in deputes_data.items()
             if info.get("etatCivil", {}).get("ident", {}).get("nom", "").lower() == nom.lower()
         ]
-        
+
         if len(matching_deputes) == 0:
             return {"error": "Député non trouvé"}
         elif len(matching_deputes) == 1:
@@ -122,16 +123,40 @@ def get_depute(
             for mandat in depute["mandats"]["mandat"]:
                 organe_ref = mandat.get("organes", {}).get("organeRef")
                 if organe_ref in organes_data:
-                    mandat["nomOrgane"] = organes_data[organe_ref]  # 🔄 Remplace l'ID par le libellé
-        
+                    mandat["nomOrgane"] = organes_data[organe_ref]
         return depute
 
     return {"error": "Veuillez fournir un identifiant (`depute_id`) ou un nom (`nom`)"}
 
+@app.get("/depute_enrichi")
+def get_depute_enrichi(depute_id: str = Query(...)):
+    depute = deputes_data.get(depute_id)
+    if not depute:
+        return {"error": "Député non trouvé"}
+
+    statistiques = enrichir_depute_avec_statistiques(depute_id)
+    depute_enrichi = depute.copy()
+    depute_enrichi["statistiques"] = statistiques
+    return depute_enrichi
+
+def enrichir_depute_avec_statistiques(depute_id):
+    try:
+        response = requests.get(f"{TABULAR_API_BASE}?ID__exact={depute_id}&page_size=1")
+        if response.status_code == 200:
+            data = response.json()
+            if "data" in data and len(data["data"]) > 0:
+                return data["data"][0]  # retourne la ligne trouvée
+            else:
+                return {"info": "Aucune statistique trouvée pour ce député"}
+        else:
+            return {"error": f"Erreur lors de la récupération des données statistiques (code {response.status_code})"}
+    except Exception as e:
+        return {"error": f"Exception levée : {str(e)}"}
+
 @app.get("/votes")
 def get_votes(depute_id: str = Query(...)):
     results = []
-    
+
     for entry in scrutins_data:
         scr = entry.get("scrutin", {})
         numero = scr.get("numero")
