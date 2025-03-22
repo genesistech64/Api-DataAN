@@ -28,7 +28,7 @@ deputes_data = {}
 deports_data = []
 organes_data = {}
 tabular_column_name = None
-tabular_group_column_name = None
+tabular_group_column_name = "ID"
 
 def download_and_parse_scrutins():
     global scrutins_data
@@ -91,7 +91,7 @@ def detect_tabular_column():
             profile = response.json().get("profile", {})
             headers = profile.get("header", [])
             for h in headers:
-                if h.lower() == "id":
+                if h.strip().lower() == "id":
                     tabular_column_name = h
                     print(f"✅ Colonne de liaison députés détectée : {h}")
                     return
@@ -99,28 +99,11 @@ def detect_tabular_column():
     except Exception as e:
         print(f"❌ Erreur lors de la détection de la colonne députés : {e}")
 
-def detect_group_column():
-    global tabular_group_column_name
-    try:
-        response = requests.get(TABULAR_GROUPE_PROFILE)
-        if response.status_code == 200:
-            profile = response.json().get("profile", {})
-            headers = profile.get("header", [])
-            for h in headers:
-                if h.lower() == "id":
-                    tabular_group_column_name = h
-                    print(f"✅ Colonne de liaison groupes détectée : {h}")
-                    return
-            print("⚠️ Colonne 'ID' non trouvée dans la ressource groupes.")
-    except Exception as e:
-        print(f"❌ Erreur lors de la détection de la colonne groupes : {e}")
-
 @app.on_event("startup")
 def startup_event():
     download_and_parse_scrutins()
     download_and_parse_deputes()
     detect_tabular_column()
-    detect_group_column()
     threading.Thread(target=periodic_update, daemon=True).start()
 
 def periodic_update():
@@ -130,15 +113,17 @@ def periodic_update():
         download_and_parse_scrutins()
         download_and_parse_deputes()
         detect_tabular_column()
-        detect_group_column()
         print("✅ Mise à jour terminée.")
 
 @app.get("/groupe_enrichi")
-def get_groupe_enrichi(organe_id: str = Query(...)):
+def get_groupe_enrichi(organe_id: str = Query(...), legislature: str = Query(None)):
     if not tabular_group_column_name:
         return {"error": "Colonne tabulaire non détectée pour les groupes"}
     try:
-        response = requests.get(f"{TABULAR_GROUPE_BASE}?{tabular_group_column_name}__exact={organe_id}&page_size=1")
+        url = f"{TABULAR_GROUPE_BASE}?{tabular_group_column_name}__exact={organe_id}&page_size=1"
+        if legislature:
+            url += f"&Legislature__exact={legislature}"
+        response = requests.get(url)
         if response.status_code == 200:
             data = response.json()
             if "data" in data and len(data["data"]) > 0:
@@ -151,7 +136,7 @@ def get_groupe_enrichi(organe_id: str = Query(...)):
         return {"error": f"Exception levée : {str(e)}"}
 
 @app.get("/deputes_par_organe")
-def get_deputes_par_organe(organe_id: str = Query(...), enrichi: bool = Query(False)):
+def get_deputes_par_organe(organe_id: str = Query(...), enrichi: bool = Query(False), legislature: str = Query(None)):
     results = []
 
     for uid, depute in deputes_data.items():
@@ -159,7 +144,8 @@ def get_deputes_par_organe(organe_id: str = Query(...), enrichi: bool = Query(Fa
         for mandat in mandats:
             if isinstance(mandat, dict):
                 org_ref = mandat.get("organes", {}).get("organeRef")
-                if org_ref == organe_id:
+                legis = mandat.get("legislature")
+                if org_ref == organe_id and (not legislature or legis == legislature):
                     item = {
                         "id": uid,
                         "prenom": depute.get("etatCivil", {}).get("ident", {}).get("prenom", ""),
@@ -168,7 +154,10 @@ def get_deputes_par_organe(organe_id: str = Query(...), enrichi: bool = Query(Fa
                     }
                     if enrichi and tabular_column_name:
                         try:
-                            response = requests.get(f"{TABULAR_DEPUTE_BASE}?{tabular_column_name}__exact={uid}&page_size=1")
+                            enrich_url = f"{TABULAR_DEPUTE_BASE}?{tabular_column_name}__exact={uid}&page_size=1"
+                            if legislature:
+                                enrich_url += f"&Legislature__exact={legislature}"
+                            response = requests.get(enrich_url)
                             if response.status_code == 200:
                                 json_data = response.json()
                                 if json_data.get("data"):
@@ -184,5 +173,5 @@ def get_deputes_par_organe(organe_id: str = Query(...), enrichi: bool = Query(Fa
     return results
 
 @app.get("/deputes_par_groupe")
-def get_deputes_par_groupe(organe_id: str = Query(...), enrichi: bool = Query(False)):
-    return get_deputes_par_organe(organe_id=organe_id, enrichi=enrichi)
+def get_deputes_par_groupe(organe_id: str = Query(...), enrichi: bool = Query(False), legislature: str = Query(None)):
+    return get_deputes_par_organe(organe_id=organe_id, enrichi=enrichi, legislature=legislature)
