@@ -251,3 +251,68 @@ def get_organes_liste(q: str = Query(None, description="Filtrer par libellé con
             if q.lower() in v.lower()
         }
     return organes_data
+
+# coherence et recherche 
+@app.get("/coherence")
+def get_coherence(depute_id: str = Query(...)):
+    total_votes = 0
+    coherent_votes = 0
+
+    depute = deputes_data.get(depute_id)
+    if not depute:
+        return {"error": "Député non trouvé"}
+
+    mandats = depute.get("mandats", {}).get("mandat", [])
+    if isinstance(mandats, dict):
+        mandats = [mandats]
+    groupe_id = None
+    for mandat in mandats:
+        org_ref = mandat.get("organes", {}).get("organeRef")
+        if org_ref and org_ref.startswith("PO"):
+            groupe_id = org_ref
+            break
+
+    if not groupe_id:
+        return {"error": "Groupe politique non trouvé pour ce député."}
+
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+        for groupe in groupes:
+            if groupe.get("organeRef") != groupe_id:
+                continue
+
+            majoritaire = groupe.get("vote", {}).get("positionMajoritaire")
+            decompte = groupe.get("vote", {}).get("decompteNominatif", {})
+            for cle_vote, label in {"pours": "Pour", "contres": "Contre", "abstentions": "Abstention", "nonVotants": "Non votant"}.items():
+                bloc = decompte.get(cle_vote)
+                if bloc and isinstance(bloc, dict):
+                    votants = bloc.get("votant", [])
+                    if isinstance(votants, dict):
+                        votants = [votants]
+                    for v in votants:
+                        if v.get("acteurRef") == depute_id:
+                            total_votes += 1
+                            if label == majoritaire:
+                                coherent_votes += 1
+    if total_votes == 0:
+        return {"message": "Aucun vote trouvé pour ce député dans son groupe."}
+
+    taux = round(100 * coherent_votes / total_votes, 2)
+    return {"coherence": taux, "votes_comptabilises": total_votes}
+
+@app.get("/scrutins_recherche")
+def scrutins_recherche(q: str = Query(""), date_min: str = Query(None), date_max: str = Query(None)):
+    resultats = []
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+        date = scr.get("dateScrutin")
+        if q.lower() in titre.lower():
+            if (not date_min or date >= date_min) and (not date_max or date <= date_max):
+                resultats.append({
+                    "numero": scr.get("numero"),
+                    "date": date,
+                    "titre": titre
+                })
+    return resultats
