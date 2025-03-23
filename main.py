@@ -200,7 +200,7 @@ def get_votes_groupe(organe_id: str = Query(...)):
 def groupe_vote_detail(organe_id: str = Query(...), scrutin_numero: int = Query(...)):
     for entry in scrutins_data:
         scr = entry.get("scrutin", {})
-        if scr.get("numero") == scrutin_numero:
+        if str(scr.get("numero")) == str(scrutin_numero):
             groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
 
             found_groupes = [g.get("organeRef") for g in groupes]
