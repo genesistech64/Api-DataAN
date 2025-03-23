@@ -324,3 +324,35 @@ def scrutins_recherche(q: str = Query(""), date_min: str = Query(None), date_max
                     "titre": titre
                 })
     return resultats
+
+@app.get("/scrutin_votes_detail")
+def scrutin_votes_detail(scrutin_numero: int = Query(...)):
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        if scr.get("numero") != scrutin_numero:
+            continue
+
+        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+
+        groupes_resultats = []
+        for groupe in groupes:
+            organe_id = groupe.get("organeRef")
+            nom_groupe = organes_data.get(organe_id, "Nom inconnu")
+            position = groupe.get("vote", {}).get("positionMajoritaire", "Inconnu")
+            decompte = groupe.get("vote", {}).get("decompteNominatif", {})
+
+            groupes_resultats.append({
+                "organeRef": organe_id,
+                "nom": nom_groupe,
+                "position_majoritaire": position,
+                "votes": decompte or {}
+            })
+
+        return {
+            "scrutin_numero": scrutin_numero,
+            "titre": titre,
+            "groupes": groupes_resultats
+        }
+
+    return JSONResponse(status_code=404, content={"error": "Scrutin introuvable."})
