@@ -195,12 +195,17 @@ def get_votes_groupe(organe_id: str = Query(...)):
         return {"error": "Aucun vote trouvé pour ce groupe."}
     return results
 
+
 @app.get("/groupe_vote_detail")
 def groupe_vote_detail(organe_id: str = Query(...), scrutin_numero: int = Query(...)):
     for entry in scrutins_data:
         scr = entry.get("scrutin", {})
         if scr.get("numero") == scrutin_numero:
             groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+
+            found_groupes = [g.get("organeRef") for g in groupes]
+            print(f"Groupe recherché: {organe_id}, groupes disponibles: {found_groupes}")
+
             for groupe in groupes:
                 if groupe.get("organeRef") == organe_id:
                     return {
@@ -211,7 +216,10 @@ def groupe_vote_detail(organe_id: str = Query(...), scrutin_numero: int = Query(
                         "position_majoritaire": groupe.get("vote", {}).get("positionMajoritaire"),
                         "decompte": groupe.get("vote", {}).get("decompteNominatif", {})
                     }
-    return {"error": "Aucun scrutin ou groupe correspondant trouvé."}
+
+            return {"message": "Le groupe n'a pas pris part à ce scrutin."}
+
+    return {"error": "Scrutin introuvable."}
 
 @app.get("/deports")
 def get_deports(depute_id: str = Query(...)):
