@@ -329,28 +329,32 @@ def scrutins_recherche(q: str = Query(""), date_min: str = Query(None), date_max
 def scrutin_votes_detail(scrutin_numero: int = Query(...)):
     for entry in scrutins_data:
         scr = entry.get("scrutin", {})
-        if scr.get("numero") == scrutin_numero:
-            titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
-            groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+        try:
+            if int(scr.get("numero")) == scrutin_numero:
+                titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+                groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
 
-            resultats = []
-            for groupe in groupes:
-                organe_id = groupe.get("organeRef")
-                nom_groupe = organes_data.get(organe_id, "Inconnu")
-                position_majoritaire = groupe.get("vote", {}).get("positionMajoritaire", "Inconnu")
-                decompte = groupe.get("vote", {}).get("decompteNominatif", {})
+                resultats = []
+                for groupe in groupes:
+                    organe_id = groupe.get("organeRef")
+                    nom_groupe = organes_data.get(organe_id, "Inconnu")
+                    position_majoritaire = groupe.get("vote", {}).get("positionMajoritaire", "Inconnu")
+                    decompte = groupe.get("vote", {}).get("decompteNominatif", {})
 
-                resultats.append({
-                    "organeRef": organe_id,
-                    "nom": nom_groupe,
-                    "position_majoritaire": position_majoritaire,
-                    "votes": decompte
-                })
+                    resultats.append({
+                        "organeRef": organe_id,
+                        "nom": nom_groupe,
+                        "position_majoritaire": position_majoritaire,
+                        "votes": decompte
+                    })
 
-            return {
-                "scrutin_numero": scrutin_numero,
-                "titre": titre,
-                "groupes": resultats
-            }
+                return {
+                    "scrutin_numero": scrutin_numero,
+                    "titre": titre,
+                    "groupes": resultats
+                }
+        except (ValueError, TypeError):
+            continue  # Ignore les scrutins mal formés
 
     return {"error": "Scrutin introuvable."}
+
