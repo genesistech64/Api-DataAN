@@ -196,3 +196,10 @@ def get_deputes_par_organe(organe_id: str = Query(...)):
         return {"error": "Aucun député trouvé pour cet organe."}
 
     return deputes
+    
+@app.get("/organes_liste")
+def get_organes_liste():
+    return [
+        {"id": organe_id, "libelle": libelle}
+        for organe_id, libelle in organes_data.items()
+    ]
