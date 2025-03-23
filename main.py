@@ -175,3 +175,24 @@ def get_deports(depute_id: str = Query(...)):
 @app.get("/organes")
 def get_organes(organe_id: str = Query(...)):
     return organes_data.get(organe_id, {"error": "Aucun organe trouvé"})
+
+@app.get("/deputes_par_organe")
+def get_deputes_par_organe(organe_id: str = Query(...)):
+    deputes = []
+    for uid, data in deputes_data.items():
+        mandats = data.get("mandats", {}).get("mandat", [])
+        if isinstance(mandats, dict):
+            mandats = [mandats]
+        for mandat in mandats:
+            if mandat.get("organes", {}).get("organeRef") == organe_id:
+                deputes.append({
+                    "id": uid,
+                    "nom": data.get("etatCivil", {}).get("ident", {}).get("nom"),
+                    "prenom": data.get("etatCivil", {}).get("ident", {}).get("prenom")
+                })
+                break
+
+    if not deputes:
+        return {"error": "Aucun député trouvé pour cet organe."}
+
+    return deputes
