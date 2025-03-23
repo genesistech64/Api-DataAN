@@ -24,7 +24,7 @@ deputes_data = {}
 deports_data = []
 organes_data = {}
 
-# 📥 Téléchargement et extraction des scrutins
+# 📅 Téléchargement et extraction des scrutins
 def download_and_parse_scrutins():
     global scrutins_data
     print("📥 Téléchargement des scrutins...")
@@ -46,7 +46,7 @@ def download_and_parse_scrutins():
 
     print(f"✅ {len(scrutins_data)} scrutins chargés.")
 
-# 📥 Téléchargement et extraction des députés et organes
+# 📅 Téléchargement et extraction des députés et organes
 def download_and_parse_deputes():
     global deputes_data, deports_data, organes_data
     print("📥 Téléchargement des données des députés et organes...")
@@ -166,6 +166,52 @@ def get_votes(depute_id: str = Query(...)):
         return {"error": "Aucun vote trouvé pour ce député."}
 
     return results
+
+@app.get("/votes_groupe")
+def get_votes_groupe(organe_id: str = Query(...)):
+    results = []
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        numero = scr.get("numero")
+        date = scr.get("dateScrutin")
+        titre = scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+        position = None
+
+        groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+        for groupe in groupes:
+            if groupe.get("organeRef") == organe_id:
+                position = groupe.get("vote", {}).get("positionMajoritaire", "Inconnu")
+                break
+
+        if position:
+            results.append({
+                "numero": numero,
+                "date": date,
+                "titre": titre,
+                "position_majoritaire": position
+            })
+
+    if not results:
+        return {"error": "Aucun vote trouvé pour ce groupe."}
+    return results
+
+@app.get("/groupe_vote_detail")
+def groupe_vote_detail(organe_id: str = Query(...), scrutin_numero: int = Query(...)):
+    for entry in scrutins_data:
+        scr = entry.get("scrutin", {})
+        if scr.get("numero") == scrutin_numero:
+            groupes = scr.get("ventilationVotes", {}).get("organe", {}).get("groupes", {}).get("groupe", [])
+            for groupe in groupes:
+                if groupe.get("organeRef") == organe_id:
+                    return {
+                        "scrutin": {
+                            "numero": scrutin_numero,
+                            "titre": scr.get("objet", {}).get("libelle") or scr.get("titre", "")
+                        },
+                        "position_majoritaire": groupe.get("vote", {}).get("positionMajoritaire"),
+                        "decompte": groupe.get("vote", {}).get("decompteNominatif", {})
+                    }
+    return {"error": "Aucun scrutin ou groupe correspondant trouvé."}
 
 @app.get("/deports")
 def get_deports(depute_id: str = Query(...)):
